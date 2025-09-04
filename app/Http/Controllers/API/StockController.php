@@ -40,10 +40,8 @@ class StockController extends Controller
                     return [
                         'id' => $stock->id,
                         'symbol' => $stock->symbol,
-                        'name' => $stock->description,
-                        'type' => 'stock',
-                        'exchange' => $stock->exchange,
-                        'currency' => $stock->currency,
+                        'description' => $stock->description,
+                        'type' => 'stock'
                     ];
                 });
 
@@ -56,7 +54,6 @@ class StockController extends Controller
                 ->where('is_active', true)
                 ->where(function ($q) use ($query) {
                     $q->where('symbol', 'ILIKE', "%{$query}%")
-                        ->orWhere('name', 'ILIKE', "%{$query}%")
                         ->orWhere('description', 'ILIKE', "%{$query}%");
                 })
                 ->orderBy('symbol')
@@ -66,10 +63,7 @@ class StockController extends Controller
                     return [
                         'id' => $index->id,
                         'symbol' => $index->symbol,
-                        'name' => $index->name,
-                        'type' => 'index',
-                        'exchange' => $index->exchange,
-                        'currency' => $index->currency,
+                        'type' => 'index'
                     ];
                 });
 

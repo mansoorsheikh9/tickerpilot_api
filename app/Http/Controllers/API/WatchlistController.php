@@ -8,9 +8,7 @@ use App\Models\Index;
 use App\Models\WatchlistStock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\FacadesLog;
 
 class WatchlistController extends Controller
 {
@@ -277,10 +275,16 @@ class WatchlistController extends Controller
 
         // Find the item based on type
         if ($request->type === 'stock') {
-            $item = Stock::on('pgsql')->where('symbol', strtoupper($request->symbol))->first();
+            $item = Stock::on('pgsql')
+                ->with('latestPrice')
+                ->where('symbol', strtoupper($request->symbol))
+                ->first();
             $watchableType = Stock::class;
         } else {
-            $item = Index::on('pgsql')->where('symbol', strtoupper($request->symbol))->first();
+            $item = Index::on('pgsql')
+                ->with('latestPrice')
+                ->where('symbol', strtoupper($request->symbol))
+                ->first();
             $watchableType = Index::class;
         }
 
@@ -427,7 +431,7 @@ class WatchlistController extends Controller
         }
 
         try {
-            DB::beginTransaction();
+            \DB::beginTransaction();
 
             foreach ($request->stocks as $stockData) {
                 $updated = $watchlist->watchlistStocks()
@@ -436,11 +440,11 @@ class WatchlistController extends Controller
                     ->update(['sort_order' => $stockData['sort_order']]);
 
                 if (!$updated) {
-                    Log::warning("Item {$stockData['watchable_id']} not found in section {$request->section_id} for reordering");
+                    \Log::warning("Item {$stockData['watchable_id']} not found in section {$request->section_id} for reordering");
                 }
             }
 
-            DB::commit();
+            \DB::commit();
 
             return response()->json([
                 'success' => true,
@@ -452,8 +456,8 @@ class WatchlistController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            DB::rollback();
-            Log::error('Error reordering items: ' . $e->getMessage());
+            \DB::rollback();
+            \Log::error('Error reordering items: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,

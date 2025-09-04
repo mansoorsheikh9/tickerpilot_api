@@ -51,7 +51,6 @@ class StockController extends Controller
         // Search indices if requested
         if (in_array('index', $types)) {
             $indices = Index::on('pgsql')
-                ->where('is_active', true)
                 ->where(function ($q) use ($query) {
                     $q->where('symbol', 'ILIKE', "%{$query}%")
                         ->orWhere('description', 'ILIKE', "%{$query}%");
@@ -120,7 +119,6 @@ class StockController extends Controller
                 $item = Index::on('pgsql')
                     ->with('latestPrice')
                     ->where('symbol', $symbol)
-                    ->where('is_active', true)
                     ->first();
             }
 
@@ -154,7 +152,6 @@ class StockController extends Controller
         $index = Index::on('pgsql')
             ->with('latestPrice')
             ->where('symbol', $symbol)
-            ->where('is_active', true)
             ->first();
 
         if ($index) {
@@ -248,7 +245,7 @@ class StockController extends Controller
             'name' => $item->description,
             'description' => $item->description,
             'type' => $type,
-            'is_active' => $item->is_active ?? true, // indices don't have is_active
+            'is_active' => $item->is_active ?? true,
             'latest_price' => $latestPrice ? [
                 'price' => $latestPrice->price,
                 'change' => $latestPrice->change,

@@ -253,17 +253,19 @@ class StockController extends Controller
         return [
             'id' => $item->id,
             'symbol' => $item->symbol,
-            'name' => $type === 'stock' ? $item->description : $item->name,
+            'name' => $item->description,
             'description' => $item->description,
             'type' => $type,
-            'exchange' => $item->exchange,
-            'currency' => $item->currency,
-            'is_active' => $item->is_active,
+            'is_active' => $item->is_active ?? true, // indices don't have is_active
             'latest_price' => $latestPrice ? [
                 'price' => $latestPrice->price,
                 'change' => $latestPrice->change,
-                'change_percent' => $latestPrice->change_percent ??
-                    ($latestPrice->price ? (($latestPrice->change / ($latestPrice->price - $latestPrice->change)) * 100) : null),
+                'change_percent' => $latestPrice->price && $latestPrice->change ?
+                    (($latestPrice->change / ($latestPrice->price - $latestPrice->change)) * 100) : null,
+                'open' => $latestPrice->open,
+                'high' => $latestPrice->high,
+                'low' => $latestPrice->low,
+                'close' => $latestPrice->close,
                 'volume' => $latestPrice->volume,
                 'date' => $latestPrice->date,
                 'last_updated' => $latestPrice->created_at,

@@ -13,18 +13,11 @@ class Index extends Model
     use HasUuid;
 
     protected $connection = 'pgsql';
+    protected $table = 'indices';
 
     protected $fillable = [
         'symbol',
-        'name',
-        'description',
-        'exchange',
-        'currency',
-        'is_active'
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
+        'description'
     ];
 
     public function latestPrice(): HasOne
@@ -45,7 +38,7 @@ class Index extends Model
     // Helper methods for consistency
     public function getName(): string
     {
-        return $this->name ?? $this->description;
+        return $this->description;
     }
 
     public function getType(): string
@@ -56,6 +49,6 @@ class Index extends Model
     // Scopes
     public function scopeActive($query)
     {
-        return $query->where('is_active', true);
+        return $query;
     }
 }

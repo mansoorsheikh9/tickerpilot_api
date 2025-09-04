@@ -13,12 +13,11 @@ class Stock extends Model
     use HasUuid;
 
     protected $connection = 'pgsql';
+    protected $table = 'stocks';
 
     protected $fillable = [
         'symbol',
         'description',
-        'exchange',
-        'currency',
         'is_active'
     ];
 

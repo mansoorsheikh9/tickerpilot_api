@@ -4,29 +4,33 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use App\Traits\HasUuid;
 
 class IndexPrice extends Model
 {
-    use HasUuid;
-
     protected $connection = 'pgsql';
+    protected $table = 'index_prices';
 
     protected $fillable = [
         'index_id',
+        'date',
+        'open',
+        'high',
+        'low',
+        'close',
         'price',
         'change',
-        'change_percent',
-        'volume',
-        'date'
+        'volume'
     ];
 
     protected $casts = [
+        'date' => 'date',
+        'open' => 'decimal:4',
+        'high' => 'decimal:4',
+        'low' => 'decimal:4',
+        'close' => 'decimal:4',
         'price' => 'decimal:4',
         'change' => 'decimal:4',
-        'change_percent' => 'decimal:2',
         'volume' => 'integer',
-        'date' => 'date',
     ];
 
     public function index(): BelongsTo

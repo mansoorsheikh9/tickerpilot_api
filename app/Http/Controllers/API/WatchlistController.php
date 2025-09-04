@@ -481,12 +481,16 @@ class WatchlistController extends Controller
             'watchable_id' => $watchable->id,
             'symbol' => $watchable->symbol,
             'name' => $watchlistStock->getName(),
-            'description' => $watchable->description ?? $watchable->name,
+            'description' => $watchable->description,
             'type' => $watchlistStock->getType(),
             'price' => $latestPrice?->price ?? '--',
             'change' => $latestPrice?->change ?? '--',
-            'change_percent' => $latestPrice && $latestPrice->price ?
+            'change_percent' => $latestPrice && $latestPrice->price && $latestPrice->change ?
                 (($latestPrice->change / ($latestPrice->price - $latestPrice->change)) * 100) : '--',
+            'open' => $latestPrice?->open ?? '--',
+            'high' => $latestPrice?->high ?? '--',
+            'low' => $latestPrice?->low ?? '--',
+            'close' => $latestPrice?->close ?? '--',
             'volume' => $latestPrice?->volume ?? '--',
             'last_updated' => $latestPrice?->date ?? '--',
             'sort_order' => $watchlistStock->sort_order,

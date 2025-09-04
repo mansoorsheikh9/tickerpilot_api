@@ -13,13 +13,13 @@ class StockController extends Controller
     public function search(Request $request): JsonResponse
     {
         $request->validate([
-            'q' => 'required|string|min:1',
+            'query' => 'required|string|min:1',
             'types' => 'sometimes|array',
             'types.*' => 'string|in:stock,index',
             'limit' => 'sometimes|integer|min:1|max:50'
         ]);
 
-        $query = $request->input('q');
+        $query = $request->input('query');
         $types = $request->input('types', ['stock', 'index']);
         $limit = $request->input('limit', 20);
 

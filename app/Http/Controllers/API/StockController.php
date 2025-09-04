@@ -196,7 +196,6 @@ class StockController extends Controller
                 $item = Index::on('pgsql')
                     ->with('latestPrice')
                     ->where('id', $id)
-                    ->where('is_active', true)
                     ->first();
             }
 
@@ -230,7 +229,6 @@ class StockController extends Controller
         $index = Index::on('pgsql')
             ->with('latestPrice')
             ->where('id', $id)
-            ->where('is_active', true)
             ->first();
 
         if ($index) {

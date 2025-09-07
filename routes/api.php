@@ -37,7 +37,7 @@ Route::get('/test-paddle', function() {
         'v1_test_success' => $response->successful(),
         'environment' => config('paddle.environment'),
         'base_url' => 'https://sandbox-api.paddle.com/v1',
-        'checkout_url' => 'https://sandbox-api.paddle.com/v1/checkout/sessions'
+        'checkout_url' => 'https://sandbox-api.paddle.com/v1/checkout'
     ]);
 });
 

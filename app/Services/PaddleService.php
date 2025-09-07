@@ -48,13 +48,13 @@ class PaddleService
                 'price_id' => $priceId,
                 'customer_email' => $customerEmail,
                 'environment' => $this->environment,
-                'api_url' => $this->baseUrl . '/checkout/sessions'
+                'api_url' => $this->baseUrl . '/checkout'
             ]);
 
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
-            ])->timeout(30)->post($this->baseUrl . '/checkout/sessions', $data);
+            ])->timeout(30)->post($this->baseUrl . '/checkout', $data);
 
             if ($response->successful()) {
                 $result = $response->json();

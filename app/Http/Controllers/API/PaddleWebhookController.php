@@ -1,15 +1,15 @@
 <?php
-namespace App\Http\Controllers\API;
 
-use App\Models\User;
-use App\Http\Controllers\Controller;
-use App\Models\UserSubscription;
+namespace App\Http\Controllers;
+
 use App\Models\Package;
 use App\Models\PaddleWebhookEvent;
+use App\Models\User;
+use App\Models\UserSubscription;
 use App\Services\PaddleService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Carbon\Carbon;
 
 class PaddleWebhookController extends Controller
 {
@@ -23,23 +23,26 @@ class PaddleWebhookController extends Controller
     public function handle(Request $request)
     {
         try {
-            $signature = $request->input('p_signature');
-            $data = $request->all();
+            // Billing API webhook signature verification
+            $signature = $request->header('Paddle-Signature');
+            $timestamp = $request->header('Paddle-Timestamp');
+            $rawBody = $request->getContent();
 
-            if (!$this->paddleService->verifyWebhook($data, $signature)) {
+            if (!$this->paddleService->verifyWebhook($rawBody, $signature, $timestamp)) {
                 Log::warning('Invalid Paddle webhook signature');
                 return response('Invalid signature', 401);
             }
 
-            $alertName = $data['alert_name'] ?? 'unknown';
+            $data = $request->json()->all();
+            $eventType = $data['event_type'] ?? 'unknown';
             $eventId = $data['event_id'] ?? null;
 
-            Log::info('Paddle webhook received', [
-                'alert_name' => $alertName,
-                'subscription_id' => $data['subscription_id'] ?? null,
+            Log::info('Paddle Billing API webhook received', [
+                'event_type' => $eventType,
                 'event_id' => $eventId
             ]);
 
+            // Check if we've already processed this event
             if ($eventId) {
                 $existingEvent = PaddleWebhookEvent::where('paddle_event_id', $eventId)->first();
                 if ($existingEvent) {
@@ -48,35 +51,38 @@ class PaddleWebhookController extends Controller
                 }
             }
 
+            // Store the event
             $webhookEvent = null;
             if ($eventId) {
                 $webhookEvent = PaddleWebhookEvent::create([
                     'paddle_event_id' => $eventId,
-                    'event_type' => $alertName,
+                    'event_type' => $eventType,
                     'event_data' => $data
                 ]);
             }
 
-            switch ($alertName) {
-                case 'subscription_created':
+            // Handle different webhook types
+            switch ($eventType) {
+                case 'subscription.created':
                     $this->handleSubscriptionCreated($data, $webhookEvent);
                     break;
-                case 'subscription_updated':
+                case 'subscription.updated':
                     $this->handleSubscriptionUpdated($data, $webhookEvent);
                     break;
-                case 'subscription_cancelled':
+                case 'subscription.canceled':
                     $this->handleSubscriptionCancelled($data, $webhookEvent);
                     break;
-                case 'subscription_payment_succeeded':
-                    $this->handlePaymentSucceeded($data, $webhookEvent);
+                case 'transaction.completed':
+                    $this->handleTransactionCompleted($data, $webhookEvent);
                     break;
-                case 'subscription_payment_failed':
+                case 'transaction.payment_failed':
                     $this->handlePaymentFailed($data, $webhookEvent);
                     break;
                 default:
-                    Log::info('Unhandled webhook type', ['alert_name' => $alertName]);
+                    Log::info('Unhandled webhook type', ['event_type' => $eventType]);
             }
 
+            // Mark event as processed
             if ($webhookEvent) {
                 $webhookEvent->markAsProcessed();
             }
@@ -96,9 +102,11 @@ class PaddleWebhookController extends Controller
     protected function handleSubscriptionCreated($data, $webhookEvent = null)
     {
         try {
-            $passthrough = json_decode($data['passthrough'] ?? '{}', true);
-            $userId = $passthrough['user_id'] ?? null;
-            $packageId = $passthrough['package_id'] ?? null;
+            $subscriptionData = $data['data'] ?? [];
+            $customData = $subscriptionData['custom_data'] ?? [];
+
+            $userId = $customData['user_id'] ?? null;
+            $packageId = $customData['package_id'] ?? null;
 
             if (!$userId) {
                 Log::error('No user ID in subscription created webhook', ['data' => $data]);
@@ -113,17 +121,25 @@ class PaddleWebhookController extends Controller
 
             $package = Package::find($packageId);
             if (!$package) {
-                $package = Package::where('paddle_product_id', $data['subscription_plan_id'])->first();
+                // Try to find by price_id
+                $priceId = $subscriptionData['items'][0]['price']['id'] ?? null;
+                $package = Package::where('paddle_product_id', $priceId)->first();
+
                 if (!$package) {
                     Log::error('Package not found for subscription', [
                         'package_id' => $packageId,
-                        'paddle_product_id' => $data['subscription_plan_id']
+                        'price_id' => $priceId
                     ]);
                     return;
                 }
             }
 
-            $subscription = $user->upgradeToPremium($package->id, $data);
+            $subscription = $user->upgradeToPremium($package->id, [
+                'subscription_id' => $subscriptionData['id'],
+                'customer_id' => $subscriptionData['customer_id'],
+                'status' => $subscriptionData['status'],
+                'current_billing_period' => $subscriptionData['current_billing_period'] ?? null,
+            ]);
 
             if ($webhookEvent) {
                 $webhookEvent->update(['subscription_id' => $subscription->id]);
@@ -132,7 +148,7 @@ class PaddleWebhookController extends Controller
             Log::info('Premium subscription created successfully', [
                 'user_id' => $user->id,
                 'subscription_id' => $subscription->id,
-                'paddle_subscription_id' => $data['subscription_id'],
+                'paddle_subscription_id' => $subscriptionData['id'],
                 'package_name' => $package->name
             ]);
 

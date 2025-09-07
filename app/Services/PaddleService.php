@@ -6,74 +6,75 @@ use Illuminate\Support\Facades\Log;
 
 class PaddleService
 {
-    protected $vendorId;
     protected $apiKey;
     protected $environment;
     protected $baseUrl;
 
     public function __construct()
     {
-        $this->vendorId = config('paddle.vendor_id');
         $this->apiKey = config('paddle.api_key');
         $this->environment = config('paddle.environment');
         $this->baseUrl = $this->environment === 'sandbox'
-            ? 'https://sandbox-vendors.paddle.com/api'
-            : 'https://vendors.paddle.com/api';
+            ? 'https://sandbox-api.paddle.com'
+            : 'https://api.paddle.com';
     }
 
-    public function createCheckoutSession($productId, $customerEmail, $passthrough = null, $successUrl = null, $cancelUrl = null)
+    /**
+     * Create a checkout session using Billing API
+     */
+    public function createCheckoutSession($priceId, $customerEmail, $passthrough = null, $successUrl = null, $cancelUrl = null)
     {
         try {
             $data = [
-                'vendor_id' => $this->vendorId,
-                'vendor_auth_code' => $this->apiKey,
-                'product_id' => $productId,
+                'items' => [
+                    [
+                        'price_id' => $priceId,
+                        'quantity' => 1
+                    ]
+                ],
                 'customer_email' => $customerEmail,
-                'return_url' => $successUrl ?: config('paddle.success_url'),
-                'discountable' => 1,
-                'customer_country' => 'US',
-                'marketing_consent' => 0,
+                'success_url' => $successUrl ?: config('paddle.success_url'),
+                'cancel_url' => $cancelUrl ?: config('paddle.cancel_url'),
             ];
 
+            // Add custom data if provided
             if ($passthrough) {
-                $data['passthrough'] = $passthrough;
+                $data['custom_data'] = json_decode($passthrough, true);
             }
 
-            if ($cancelUrl) {
-                $data['cancel_url'] = $cancelUrl;
-            } else {
-                $data['cancel_url'] = config('paddle.cancel_url');
-            }
-
-            Log::info('Creating Paddle checkout session', [
-                'product_id' => $productId,
+            Log::info('Creating Paddle checkout session (Billing API)', [
+                'price_id' => $priceId,
                 'customer_email' => $customerEmail,
                 'environment' => $this->environment
             ]);
 
-            $response = Http::timeout(30)->post($this->baseUrl . '/2.0/product/generate_pay_link', $data);
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(30)->post($this->baseUrl . '/checkout/sessions', $data);
 
             if ($response->successful()) {
                 $result = $response->json();
 
-                if (isset($result['success']) && $result['success']) {
+                if (isset($result['data']['url'])) {
                     Log::info('Paddle checkout session created successfully', [
-                        'product_id' => $productId,
-                        'checkout_url' => $result['response']['url']
+                        'price_id' => $priceId,
+                        'checkout_url' => $result['data']['url'],
+                        'session_id' => $result['data']['id']
                     ]);
 
-                    return $result['response']['url'];
+                    return $result['data']['url'];
                 } else {
-                    Log::error('Paddle API returned success=false', [
+                    Log::error('Paddle API returned unexpected response format', [
                         'response' => $result,
-                        'product_id' => $productId
+                        'price_id' => $priceId
                     ]);
                 }
             } else {
                 Log::error('Paddle API request failed', [
                     'status' => $response->status(),
                     'response' => $response->body(),
-                    'product_id' => $productId
+                    'price_id' => $priceId
                 ]);
             }
 
@@ -81,30 +82,68 @@ class PaddleService
         } catch (\Exception $e) {
             Log::error('Exception creating Paddle checkout', [
                 'error' => $e->getMessage(),
-                'product_id' => $productId,
+                'price_id' => $priceId,
                 'customer_email' => $customerEmail
             ]);
             return null;
         }
     }
 
+    /**
+     * Get subscription details using Billing API
+     */
+    public function getSubscription($subscriptionId)
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+            ])->timeout(30)->get($this->baseUrl . '/subscriptions/' . $subscriptionId);
+
+            if ($response->successful()) {
+                $result = $response->json();
+
+                if (isset($result['data'])) {
+                    return $result;
+                }
+            }
+
+            Log::error('Paddle API error getting subscription', [
+                'subscription_id' => $subscriptionId,
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception getting Paddle subscription', [
+                'subscription_id' => $subscriptionId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Cancel a subscription using Billing API
+     */
     public function cancelSubscription($subscriptionId)
     {
         try {
-            $response = Http::timeout(30)->post($this->baseUrl . '/2.0/subscription/users_cancel', [
-                'vendor_id' => $this->vendorId,
-                'vendor_auth_code' => $this->apiKey,
-                'subscription_id' => $subscriptionId
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(30)->post($this->baseUrl . '/subscriptions/' . $subscriptionId . '/cancel', [
+                'effective_from' => 'immediately'
             ]);
 
             if ($response->successful()) {
                 $result = $response->json();
 
-                if (isset($result['success']) && $result['success']) {
+                if (isset($result['data'])) {
                     Log::info('Subscription cancelled successfully via Paddle', [
                         'subscription_id' => $subscriptionId
                     ]);
-                    return $result;
+                    return ['success' => true, 'data' => $result['data']];
                 }
             }
 
@@ -124,50 +163,158 @@ class PaddleService
         }
     }
 
-    public function verifyWebhook($data, $signature)
+    /**
+     * Pause a subscription using Billing API
+     */
+    public function pauseSubscription($subscriptionId)
     {
         try {
-            $publicKey = config('paddle.public_key');
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(30)->post($this->baseUrl . '/subscriptions/' . $subscriptionId . '/pause');
 
-            if (!$publicKey) {
-                Log::error('Paddle public key not configured');
+            if ($response->successful()) {
+                $result = $response->json();
+                return ['success' => true, 'data' => $result['data']];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception pausing Paddle subscription', [
+                'subscription_id' => $subscriptionId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Resume a subscription using Billing API
+     */
+    public function resumeSubscription($subscriptionId)
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(30)->post($this->baseUrl . '/subscriptions/' . $subscriptionId . '/resume');
+
+            if ($response->successful()) {
+                $result = $response->json();
+                return ['success' => true, 'data' => $result['data']];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception resuming Paddle subscription', [
+                'subscription_id' => $subscriptionId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Verify webhook signature for Billing API
+     */
+    public function verifyWebhook($rawBody, $signature, $timestamp)
+    {
+        try {
+            $webhookSecret = config('paddle.webhook_secret');
+
+            if (!$webhookSecret) {
+                Log::error('Paddle webhook secret not configured');
                 return false;
             }
 
-            // Remove signature from data for verification
-            $dataForVerification = $data;
-            unset($dataForVerification['p_signature']);
+            // Billing API uses timestamp + body for signature verification
+            $signedPayload = $timestamp . ':' . $rawBody;
+            $expectedSignature = hash_hmac('sha256', $signedPayload, $webhookSecret);
 
-            // Sort the data by key
-            ksort($dataForVerification);
-
-            // Serialize the data
-            $serializedData = serialize($dataForVerification);
-
-            // Verify signature
-            $verified = openssl_verify(
-                $serializedData,
-                base64_decode($signature),
-                $publicKey,
-                OPENSSL_ALGO_SHA1
-            );
-
-            if ($verified === 1) {
+            if (hash_equals($expectedSignature, $signature)) {
                 return true;
-            } elseif ($verified === 0) {
-                Log::warning('Paddle webhook signature verification failed', [
-                    'signature_provided' => !empty($signature),
-                    'public_key_configured' => !empty($publicKey)
-                ]);
-                return false;
-            } else {
-                Log::error('Error verifying Paddle webhook signature', [
-                    'openssl_error' => openssl_error_string()
-                ]);
-                return false;
             }
+
+            Log::warning('Paddle webhook signature verification failed', [
+                'expected' => $expectedSignature,
+                'received' => $signature
+            ]);
+
+            return false;
         } catch (\Exception $e) {
             Log::error('Exception verifying Paddle webhook', [
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Get customer details
+     */
+    public function getCustomer($customerId)
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+            ])->timeout(30)->get($this->baseUrl . '/customers/' . $customerId);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception getting Paddle customer', [
+                'customer_id' => $customerId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * List transactions for a subscription
+     */
+    public function getSubscriptionTransactions($subscriptionId)
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+            ])->timeout(30)->get($this->baseUrl . '/transactions', [
+                'subscription_id' => $subscriptionId
+            ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Exception getting subscription transactions', [
+                'subscription_id' => $subscriptionId,
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Test the API connection
+     */
+    public function testConnection()
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+            ])->timeout(10)->get($this->baseUrl . '/products', [
+                'per_page' => 1
+            ]);
+
+            return $response->successful();
+        } catch (\Exception $e) {
+            Log::error('Exception testing Paddle connection', [
                 'error' => $e->getMessage()
             ]);
             return false;

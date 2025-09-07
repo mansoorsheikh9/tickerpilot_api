@@ -18,6 +18,18 @@ Route::post('google-login', [AuthController::class, 'googleLogin']);
 // Paddle webhook (must be outside auth middleware)
 Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle']);
 
+// Add to routes/api.php temporarily
+Route::get('/test-paddle', function() {
+    $paddleService = new \App\Services\PaddleService();
+    $result = $paddleService->testConnection();
+
+    return response()->json([
+        'api_connection' => $result,
+        'environment' => config('paddle.environment'),
+        'api_key_prefix' => substr(config('paddle.api_key'), 0, 10) . '...'
+    ]);
+});
+
 // Authenticated routes
 Route::middleware('auth:api')->group(function () {
     // Auth routes

@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -32,7 +33,8 @@ class AuthController extends Controller
                 'provider' => 'email',
             ]);
 
-            $this->assignBasicPackage($user);
+            // Create Basic subscription for new user
+            $user->ensureActiveSubscription();
 
             $token = $user->createToken('tickerpilot-extension')->accessToken;
 
@@ -48,6 +50,11 @@ class AuthController extends Controller
             ], 201);
         } catch (\Throwable $e) {
             DB::rollBack();
+            Log::error('Registration failed', [
+                'email' => $request->email,
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Registration failed',
@@ -65,28 +72,24 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        // Check if user exists
         if (!$user) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
-        // SECURITY FIX: Prevent email/password login for Google users
         if ($user->provider === 'google') {
             throw ValidationException::withMessages([
                 'email' => ['This account uses Google Sign-In. Please use the Google button above.'],
             ]);
         }
 
-        // Additional safety check for null passwords
         if ($user->provider === 'email' && (!$user->password || !Hash::check($request->password, $user->password))) {
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
-        // Check if account is active
         if (!$user->is_active) {
             return response()->json([
                 'success' => false,
@@ -94,6 +97,7 @@ class AuthController extends Controller
             ], 403);
         }
 
+        $user->ensureActiveSubscription();
         $token = $user->createToken('tickerpilot-extension')->accessToken;
 
         return response()->json([
@@ -129,27 +133,22 @@ class AuthController extends Controller
             $name = $payload['name'];
             $avatar = $payload['picture'] ?? null;
 
-            // IMPROVED: Better user lookup logic
-            // First, try to find by Google ID (most reliable)
             $user = User::where('google_id', $googleId)->first();
 
             if (!$user) {
-                // Check if email exists with different provider
                 $existingUser = User::where('email', $email)->first();
 
                 if ($existingUser) {
                     if ($existingUser->provider === 'email') {
-                        // Link existing email account to Google
                         $existingUser->update([
                             'google_id' => $googleId,
                             'avatar' => $avatar,
                             'provider' => 'google',
                             'email_verified_at' => now(),
-                            'password' => null, // Remove password since using Google
+                            'password' => null,
                         ]);
                         $user = $existingUser;
                     } else {
-                        // Edge case: email exists with different Google ID
                         DB::rollBack();
                         return response()->json([
                             'success' => false,
@@ -157,7 +156,6 @@ class AuthController extends Controller
                         ], 409);
                     }
                 } else {
-                    // Create new Google user
                     $user = User::create([
                         'name' => $name,
                         'email' => $email,
@@ -167,11 +165,8 @@ class AuthController extends Controller
                         'email_verified_at' => now(),
                         'password' => null,
                     ]);
-
-                    $this->assignBasicPackage($user);
                 }
             } else {
-                // Update existing Google user's profile information
                 $user->update([
                     'name' => $name,
                     'email' => $email,
@@ -179,7 +174,6 @@ class AuthController extends Controller
                 ]);
             }
 
-            // Check if account is active
             if (!$user->is_active) {
                 DB::rollBack();
                 return response()->json([
@@ -188,6 +182,7 @@ class AuthController extends Controller
                 ], 403);
             }
 
+            $user->ensureActiveSubscription();
             $token = $user->createToken('tickerpilot-extension')->accessToken;
 
             DB::commit();
@@ -202,6 +197,11 @@ class AuthController extends Controller
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();
+            Log::error('Google login failed', [
+                'email' => $email ?? 'unknown',
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Google authentication failed',
@@ -222,7 +222,9 @@ class AuthController extends Controller
 
     public function user(Request $request): JsonResponse
     {
-        $user = $request->user()->load('activeSubscription.package');
+        $user = $request->user();
+        $user->ensureActiveSubscription();
+        $user->load('activeSubscription.package');
         $package = $user->getCurrentPackage();
 
         return response()->json([
@@ -246,9 +248,6 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
-     * Convert Google user back to email/password user
-     */
     public function convertToEmailAuth(Request $request): JsonResponse
     {
         $request->validate([
@@ -279,33 +278,41 @@ class AuthController extends Controller
         ]);
     }
 
-    private function assignBasicPackage(User $user): void
-    {
-        $basicPackage = Package::where('is_premium', false)->first();
-
-        if ($basicPackage) {
-            UserSubscription::create([
-                'user_id' => $user->id,
-                'package_id' => $basicPackage->id,
-                'starts_at' => now(),
-                'expires_at' => null,
-                'status' => 'active',
-            ]);
-        }
-    }
-
     public function requestUpgrade(Request $request): JsonResponse
     {
         $user = $request->user();
-        $whatsappNumber = env('WHATSAPP_NUMBER', '+1234567890');
-        $message = urlencode("Hi! I'm interested in upgrading to Premium for TickerPilot. My email: {$user->email}");
+
+        if ($user->isPremium()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User already has premium subscription'
+            ], 400);
+        }
+
+        $premiumPackages = Package::where('is_premium', true)
+            ->where('is_active', true)
+            ->get();
+
+        if ($premiumPackages->isEmpty()) {
+            $whatsappNumber = env('WHATSAPP_NUMBER', '+1234567890');
+            $message = urlencode("Hi! I'm interested in upgrading to Premium for TickerPilot. My email: {$user->email}");
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Upgrade request received',
+                'data' => [
+                    'whatsapp_url' => "https://wa.me/{$whatsappNumber}?text={$message}",
+                    'whatsapp_number' => $whatsappNumber,
+                ]
+            ]);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Upgrade request received',
+            'message' => 'Premium packages available',
             'data' => [
-                'whatsapp_url' => "https://wa.me/{$whatsappNumber}?text={$message}",
-                'whatsapp_number' => $whatsappNumber,
+                'packages' => $premiumPackages,
+                'current_package' => $user->getCurrentPackage()
             ]
         ]);
     }

@@ -5,17 +5,28 @@ use App\Http\Controllers\API\WatchlistController;
 use App\Http\Controllers\API\WatchlistSectionController;
 use App\Http\Controllers\API\StockController;
 use App\Http\Controllers\API\ChartLayoutController;
+use App\Http\Controllers\API\SubscriptionController;
+use App\Http\Controllers\PaddleWebhookController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
+// Public routes
 Route::post('register', [AuthController::class, 'register']);
 Route::post('login', [AuthController::class, 'login']);
 Route::post('google-login', [AuthController::class, 'googleLogin']);
 
+// Paddle webhook (must be outside auth middleware)
+Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle']);
+
+// Authenticated routes
 Route::middleware('auth:api')->group(function () {
+    // Auth routes
     Route::post('logout', [AuthController::class, 'logout']);
     Route::get('user', [AuthController::class, 'user']);
     Route::post('request-upgrade', [AuthController::class, 'requestUpgrade']);
+    Route::post('convert-to-email-auth', [AuthController::class, 'convertToEmailAuth']);
 
+    // User package limits
     Route::get('user/package-limits', function (Request $request) {
         return response()->json([
             'success' => true,
@@ -23,12 +34,22 @@ Route::middleware('auth:api')->group(function () {
         ]);
     });
 
+    // Subscription management routes
+    Route::prefix('subscription')->group(function () {
+        Route::post('create-checkout', [SubscriptionController::class, 'createCheckout']);
+        Route::get('status', [SubscriptionController::class, 'status']);
+        Route::post('cancel', [SubscriptionController::class, 'cancel']);
+        Route::get('plans', [SubscriptionController::class, 'plans']);
+    });
+
+    // Stock routes
     Route::prefix('stocks')->group(function () {
         Route::get('search', [StockController::class, 'search']);
         Route::get('symbol/{symbol}', [StockController::class, 'getBySymbol']);
         Route::get('{stock}', [StockController::class, 'show']);
     });
 
+    // Watchlist routes
     Route::prefix('watchlists')->group(function () {
         Route::get('/', [WatchlistController::class, 'index']);
         Route::post('/', [WatchlistController::class, 'store']);
@@ -49,11 +70,12 @@ Route::middleware('auth:api')->group(function () {
         Route::put('{watchlist}/sections-reorder', [WatchlistSectionController::class, 'reorderSections']);
     });
 
+    // Chart layout routes
     Route::prefix('chart-layouts')->group(function () {
         Route::get('/', [ChartLayoutController::class, 'index']);
         Route::post('/', [ChartLayoutController::class, 'store']);
         Route::get('{layout}', [ChartLayoutController::class, 'show']);
-        Route::put('{layout}', [ChartLayoutController::class, 'update'])    ;
+        Route::put('{layout}', [ChartLayoutController::class, 'update']);
         Route::delete('{layout}', [ChartLayoutController::class, 'destroy']);
     });
 });

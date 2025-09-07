@@ -14,9 +14,10 @@ class PaddleService
     {
         $this->apiKey = config('paddle.api_key');
         $this->environment = config('paddle.environment');
+        // Add /v1 to the base URL
         $this->baseUrl = $this->environment === 'sandbox'
-            ? 'https://sandbox-api.paddle.com'
-            : 'https://api.paddle.com';
+            ? 'https://sandbox-api.paddle.com/v1'
+            : 'https://api.paddle.com/v1';
     }
 
     public function createCheckoutSession($priceId, $customerEmail, $passthrough = null, $successUrl = null, $cancelUrl = null)
@@ -39,12 +40,11 @@ class PaddleService
                 'cancel_url' => $cancelUrl ?: config('paddle.cancel_url')
             ];
 
-            // Add custom data if present
             if (!empty($customData)) {
                 $data['custom_data'] = $customData;
             }
 
-            Log::info('Creating Paddle checkout session', [
+            Log::info('Creating Paddle checkout session with v1 API', [
                 'price_id' => $priceId,
                 'customer_email' => $customerEmail,
                 'environment' => $this->environment,
@@ -73,7 +73,8 @@ class PaddleService
             Log::error('Paddle API request failed', [
                 'status' => $response->status(),
                 'response' => $response->body(),
-                'price_id' => $priceId
+                'price_id' => $priceId,
+                'full_url' => $this->baseUrl . '/checkout/sessions'
             ]);
 
             return null;
@@ -84,33 +85,6 @@ class PaddleService
                 'customer_email' => $customerEmail
             ]);
             return null;
-        }
-    }
-
-    public function verifyWebhook($rawBody, $signature)
-    {
-        try {
-            $webhookSecret = config('paddle.webhook_secret');
-
-            if (!$webhookSecret) {
-                Log::error('Paddle webhook secret not configured');
-                return false;
-            }
-
-            // For Billing API, signature verification is different
-            $computedSignature = hash_hmac('sha256', $rawBody, $webhookSecret);
-
-            if (hash_equals($signature, $computedSignature)) {
-                return true;
-            }
-
-            Log::warning('Paddle webhook signature verification failed');
-            return false;
-        } catch (\Exception $e) {
-            Log::error('Exception verifying Paddle webhook', [
-                'error' => $e->getMessage()
-            ]);
-            return false;
         }
     }
 
@@ -142,6 +116,7 @@ class PaddleService
     public function testConnection()
     {
         try {
+            // Test with v1 API endpoint
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
             ])->timeout(10)->get($this->baseUrl . '/products', ['per_page' => 1]);
@@ -149,6 +124,27 @@ class PaddleService
             return $response->successful();
         } catch (\Exception $e) {
             Log::error('Exception testing Paddle connection', [
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function verifyWebhook($rawBody, $signature)
+    {
+        try {
+            $webhookSecret = config('paddle.webhook_secret');
+
+            if (!$webhookSecret) {
+                Log::error('Paddle webhook secret not configured');
+                return false;
+            }
+
+            $computedSignature = hash_hmac('sha256', $rawBody, $webhookSecret);
+
+            return hash_equals($signature, $computedSignature);
+        } catch (\Exception $e) {
+            Log::error('Exception verifying Paddle webhook', [
                 'error' => $e->getMessage()
             ]);
             return false;

@@ -8,6 +8,7 @@ use App\Http\Controllers\API\ChartLayoutController;
 use App\Http\Controllers\API\SubscriptionController;
 use App\Http\Controllers\PaddleWebhookController;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 
 // Public routes
@@ -18,15 +19,25 @@ Route::post('google-login', [AuthController::class, 'googleLogin']);
 // Paddle webhook (must be outside auth middleware)
 Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle']);
 
-// Add to routes/api.php temporarily
+// Update the test route to verify v1 API
 Route::get('/test-paddle', function() {
     $paddleService = new \App\Services\PaddleService();
-    $result = $paddleService->testConnection();
+
+    // Test connection
+    $connection = $paddleService->testConnection();
+
+    // Test a simple API call to verify v1 endpoint
+    $response = Http::withHeaders([
+        'Authorization' => 'Bearer ' . config('paddle.api_key'),
+    ])->get('https://sandbox-api.paddle.com/v1/products', ['per_page' => 1]);
 
     return response()->json([
-        'api_connection' => $result,
+        'api_connection' => $connection,
+        'v1_test_status' => $response->status(),
+        'v1_test_success' => $response->successful(),
         'environment' => config('paddle.environment'),
-        'api_key_prefix' => substr(config('paddle.api_key'), 0, 10) . '...'
+        'base_url' => 'https://sandbox-api.paddle.com/v1',
+        'checkout_url' => 'https://sandbox-api.paddle.com/v1/checkout/sessions'
     ]);
 });
 

@@ -1,7 +1,8 @@
 <?php
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\API;
 
 use App\Models\User;
+use App\Http\Controllers\Controller;
 use App\Models\UserSubscription;
 use App\Models\Package;
 use App\Models\PaddleWebhookEvent;

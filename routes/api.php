@@ -17,7 +17,7 @@ Route::post('login', [AuthController::class, 'login']);
 Route::post('google-login', [AuthController::class, 'googleLogin']);
 
 // Paddle webhook (must be outside auth middleware)
-Route::post('paddle/webhook', [PaddleWebhookController::class, 'handle']);
+Route::post('subscription/webhook', [SubscriptionController::class, 'webhook'])->name('paddle.webhook');
 
 // Update the test route to verify v1 API
 Route::get('/test-paddle', function() {
@@ -59,10 +59,11 @@ Route::middleware('auth:api')->group(function () {
 
     // Subscription management routes
     Route::prefix('subscription')->group(function () {
-        Route::post('create-checkout', [SubscriptionController::class, 'createCheckout']);
-        Route::get('status', [SubscriptionController::class, 'status']);
-        Route::post('cancel', [SubscriptionController::class, 'cancel']);
-        Route::get('plans', [SubscriptionController::class, 'plans']);
+        Route::post('create-transaction', [SubscriptionController::class, 'createTransaction'])->name('subscription.create-transaction');
+        // Subscription management
+        Route::get('status', [SubscriptionController::class, 'status'])->name('subscription.status');
+        Route::post('cancel', [SubscriptionController::class, 'cancel'])->name('subscription.cancel');
+        Route::get('plans', [SubscriptionController::class, 'plans'])->name('subscription.plans');
     });
 
     // Stock routes

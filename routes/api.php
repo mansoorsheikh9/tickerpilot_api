@@ -6,7 +6,6 @@ use App\Http\Controllers\API\WatchlistSectionController;
 use App\Http\Controllers\API\StockController;
 use App\Http\Controllers\API\ChartLayoutController;
 use App\Http\Controllers\API\SubscriptionController;
-use App\Http\Controllers\PaddleWebhookController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
@@ -15,6 +14,8 @@ use Illuminate\Support\Facades\Route;
 Route::post('register', [AuthController::class, 'register']);
 Route::post('login', [AuthController::class, 'login']);
 Route::post('google-login', [AuthController::class, 'googleLogin']);
+
+Route::get('user/{idOrEmail}', [AuthController::class, 'getUserByIdOrEmail']);
 
 // Paddle webhook (must be outside auth middleware)
 Route::post('subscription/webhook', [SubscriptionController::class, 'webhook'])->name('paddle.webhook');
@@ -61,7 +62,7 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('subscription')->group(function () {
         Route::post('create-transaction', [SubscriptionController::class, 'createTransaction'])->name('subscription.create-transaction');
         // Subscription management
-        Route::get('status', [SubscriptionController::class, 'status'])->name('subscription.status');
+        Route::get('status/id', [SubscriptionController::class, 'status'])->name('subscription.status');
         Route::post('cancel', [SubscriptionController::class, 'cancel'])->name('subscription.cancel');
         Route::get('plans', [SubscriptionController::class, 'plans'])->name('subscription.plans');
     });

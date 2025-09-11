@@ -248,6 +248,76 @@ class AuthController extends Controller
         ]);
     }
 
+    /**
+     * Public endpoint to get user by ID or email
+     */
+    public function getUserByIdOrEmail(string $idOrEmail): JsonResponse
+    {
+        try {
+            // Try to find user by ID first (if numeric), then by email
+            $user = null;
+
+            if (is_numeric($idOrEmail)) {
+                $user = User::find($idOrEmail);
+            }
+
+            // If not found by ID or if not numeric, try by email
+            if (!$user) {
+                $user = User::where('email', $idOrEmail)->first();
+            }
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
+
+            // Check if user is active
+            if (!$user->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User account is inactive'
+                ], 403);
+            }
+
+            $user->ensureActiveSubscription();
+            $user->load('activeSubscription.package');
+            $package = $user->getCurrentPackage();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'user' => $user,
+                    'package' => $package,
+                    'is_premium' => $user->isPremium(),
+                    'limits' => [
+                        'watchlists' => [
+                            'current' => $user->watchlists()->count(),
+                            'max' => $package?->max_watchlists ?? 1,
+                        ],
+                        'stocks_per_watchlist' => $package?->max_stocks_per_watchlist ?? 10,
+                        'chart_layouts' => [
+                            'current' => $user->chartLayouts()->count(),
+                            'max' => $package?->max_chart_layouts ?? 5,
+                        ]
+                    ]
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Get user by ID or email failed', [
+                'id_or_email' => $idOrEmail,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve user information',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function convertToEmailAuth(Request $request): JsonResponse
     {
         $request->validate([

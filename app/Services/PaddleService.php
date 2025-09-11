@@ -41,11 +41,6 @@ class PaddleService
                 throw new \Exception('Failed to create customer');
             }
 
-            // Store paddle customer ID in user record for webhook processing
-            if (!$user->paddle_customer_id) {
-                $user->update(['paddle_customer_id' => $customer['id']]);
-            }
-
             // Create the transaction
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
@@ -113,15 +108,7 @@ class PaddleService
     protected function createOrGetCustomer($user)
     {
         try {
-            // Check if user already has a paddle customer ID
-            if ($user->paddle_customer_id) {
-                $customer = $this->getCustomer($user->paddle_customer_id);
-                if ($customer) {
-                    return $customer;
-                }
-            }
-
-            // Search for existing customer by email
+            // Search for existing customer by email first
             $searchResponse = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
@@ -132,16 +119,11 @@ class PaddleService
             if ($searchResponse->successful()) {
                 $searchData = $searchResponse->json();
                 if (!empty($searchData['data'])) {
-                    $customer = $searchData['data'][0];
-
-                    // Update user with paddle customer ID
-                    $user->update(['paddle_customer_id' => $customer['id']]);
-
                     Log::info('Found existing Paddle customer', [
-                        'customer_id' => $customer['id'],
+                        'customer_id' => $searchData['data'][0]['id'],
                         'user_id' => $user->id
                     ]);
-                    return $customer;
+                    return $searchData['data'][0];
                 }
             }
 
@@ -169,17 +151,13 @@ class PaddleService
             }
 
             $customerData = $createResponse->json();
-            $customer = $customerData['data'];
-
-            // Update user with paddle customer ID
-            $user->update(['paddle_customer_id' => $customer['id']]);
 
             Log::info('Created new Paddle customer', [
-                'customer_id' => $customer['id'],
+                'customer_id' => $customerData['data']['id'],
                 'user_id' => $user->id
             ]);
 
-            return $customer;
+            return $customerData['data'];
 
         } catch (\Exception $e) {
             Log::error('Error creating/getting Paddle customer', [
@@ -476,4 +454,4 @@ class PaddleService
             return null;
         }
     }
-}
+};

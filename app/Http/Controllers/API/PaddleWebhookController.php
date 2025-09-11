@@ -1,5 +1,6 @@
 <?php
 
+
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
@@ -146,6 +147,36 @@ class PaddleWebhookController extends Controller
         }
     }
 
+    protected function findUserByCustomerId($customerId)
+    {
+        // First try: Find user through existing subscription
+        $existingSubscription = UserSubscription::where('paddle_user_id', $customerId)->first();
+
+        if ($existingSubscription) {
+            return $existingSubscription->user;
+        }
+
+        // Second try: Get user info from Paddle customer data
+        $customerData = $this->paddleService->getCustomer($customerId);
+        if ($customerData && isset($customerData['custom_data']['user_id'])) {
+            return \App\Models\User::find($customerData['custom_data']['user_id']);
+        }
+
+        return null;
+    }
+
+    protected function getBasicPackage()
+    {
+        $basicPackage = Package::where('price', 0)->first();
+
+        if (!$basicPackage) {
+            Log::error('Basic package not found - this is a critical configuration issue');
+            throw new \Exception('Basic package with price 0 not found');
+        }
+
+        return $basicPackage;
+    }
+
     protected function handleTransactionCompleted($transaction)
     {
         try {
@@ -164,8 +195,8 @@ class PaddleWebhookController extends Controller
                 return;
             }
 
-            // Find user by paddle customer ID
-            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
+            // Find user by checking existing subscription with this paddle customer ID
+            $user = $this->findUserByCustomerId($customerId);
 
             if (!$user) {
                 Log::error('User not found for customer', [
@@ -200,22 +231,30 @@ class PaddleWebhookController extends Controller
             $startsAt = $billingPeriod ? Carbon::parse($billingPeriod['starts_at']) : now();
             $endsAt = $billingPeriod ? Carbon::parse($billingPeriod['ends_at']) : now()->addMonth();
 
-            // Create or update subscription
-            $subscription = UserSubscription::updateOrCreate(
-                ['user_id' => $user->id],
-                [
-                    'package_id' => $package->id,
-                    'status' => 'active',
-                    'starts_at' => $startsAt,
-                    'expires_at' => $endsAt,
-                    'paddle_subscription_id' => $subscriptionId,
-                    'paddle_user_id' => $customerId,
-                    'paddle_plan_id' => $productId,
-                    'current_period_start' => $startsAt,
-                    'current_period_end' => $endsAt,
-                    'paddle_data' => json_encode($transaction)
-                ]
-            );
+            // Update existing subscription (user already has free subscription)
+            $subscription = UserSubscription::where('user_id', $user->id)->first();
+
+            if (!$subscription) {
+                Log::error('No existing subscription found for user', [
+                    'user_id' => $user->id,
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
+            }
+
+            // Upgrade from free to paid subscription
+            $subscription->update([
+                'package_id' => $package->id,
+                'status' => 'active',
+                'starts_at' => $startsAt,
+                'expires_at' => $endsAt,
+                'paddle_subscription_id' => $subscriptionId,
+                'paddle_user_id' => $customerId,
+                'paddle_plan_id' => $productId,
+                'current_period_start' => $startsAt,
+                'current_period_end' => $endsAt,
+                'paddle_data' => json_encode($transaction)
+            ]);
 
             Log::info('Subscription activated from transaction', [
                 'user_id' => $user->id,
@@ -249,27 +288,58 @@ class PaddleWebhookController extends Controller
                 return;
             }
 
-            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
+            // Find user by customer ID (works for both new and existing users)
+            $user = $this->findUserByCustomerId($customerId);
 
-            if ($user) {
-                // Handle failed payment - maybe send notification, update subscription status, etc.
-                Log::info('Payment failed for user', [
+            if (!$user) {
+                Log::warning('User not found for failed payment', [
+                    'customer_id' => $customerId,
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
+            }
+
+            // Get user's subscription
+            $existingSubscription = UserSubscription::where('user_id', $user->id)->first();
+
+            if (!$existingSubscription) {
+                Log::warning('No subscription found for user with failed payment', [
                     'user_id' => $user->id,
                     'transaction_id' => $transaction['id']
                 ]);
-
-                // Optional: Update subscription status to 'past_due' or similar
-                $subscription = UserSubscription::where('user_id', $user->id)
-                    ->where('paddle_subscription_id', $transaction['subscription_id'] ?? null)
-                    ->first();
-
-                if ($subscription) {
-                    $subscription->update([
-                        'status' => 'past_due',
-                        'paddle_data' => json_encode($transaction)
-                    ]);
-                }
+                return;
             }
+
+            Log::info('Payment failed for user - downgrading to basic', [
+                'user_id' => $user->id,
+                'transaction_id' => $transaction['id']
+            ]);
+
+            // Get basic package
+            $basicPackage = $this->getBasicPackage();
+
+            // Downgrade to basic package
+            $existingSubscription->update([
+                'package_id' => $basicPackage->id,
+                'status' => 'active', // Keep active but on basic plan
+                'paddle_subscription_id' => null, // Remove Paddle details
+                'paddle_user_id' => null,
+                'paddle_plan_id' => null,
+                'expires_at' => null, // Basic plan doesn't expire
+                'current_period_start' => null,
+                'current_period_end' => null,
+                'cancelled_at' => now(),
+                'paddle_data' => json_encode([
+                    'reason' => 'payment_failed',
+                    'failed_transaction' => $transaction,
+                    'downgraded_at' => now()
+                ])
+            ]);
+
+            Log::info('User downgraded to basic plan due to payment failure', [
+                'user_id' => $user->id,
+                'subscription_id' => $existingSubscription->id
+            ]);
 
         } catch (\Exception $e) {
             Log::error('Error handling failed transaction', [
@@ -296,11 +366,11 @@ class PaddleWebhookController extends Controller
                 return;
             }
 
-            // Find user by paddle customer ID
-            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
+            // Find user by checking existing subscription with this paddle customer ID
+            $user = $this->findUserByCustomerId($customerId);
 
             if (!$user) {
-                Log::error('User not found for subscription', [
+                Log::error('User not found for customer', [
                     'customer_id' => $customerId,
                     'subscription_id' => $subscription['id']
                 ]);
@@ -327,21 +397,30 @@ class PaddleWebhookController extends Controller
                 return;
             }
 
-            UserSubscription::updateOrCreate(
-                ['user_id' => $user->id],
-                [
-                    'package_id' => $package->id,
-                    'status' => $subscription['status'],
-                    'paddle_subscription_id' => $subscription['id'],
-                    'paddle_user_id' => $subscription['customer_id'],
-                    'paddle_plan_id' => $productId,
-                    'current_period_start' => Carbon::parse($subscription['current_billing_period']['starts_at']),
-                    'current_period_end' => Carbon::parse($subscription['current_billing_period']['ends_at']),
-                    'starts_at' => Carbon::parse($subscription['started_at'] ?? $subscription['created_at']),
-                    'expires_at' => Carbon::parse($subscription['current_billing_period']['ends_at']),
-                    'paddle_data' => json_encode($subscription)
-                ]
-            );
+            // Update existing subscription (user already has free subscription)
+            $userSubscription = UserSubscription::where('user_id', $user->id)->first();
+
+            if (!$userSubscription) {
+                Log::error('No existing subscription found for user', [
+                    'user_id' => $user->id,
+                    'subscription_id' => $subscription['id']
+                ]);
+                return;
+            }
+
+            // Upgrade from free to paid subscription
+            $userSubscription->update([
+                'package_id' => $package->id,
+                'status' => $subscription['status'],
+                'paddle_subscription_id' => $subscription['id'],
+                'paddle_user_id' => $subscription['customer_id'],
+                'paddle_plan_id' => $productId,
+                'current_period_start' => Carbon::parse($subscription['current_billing_period']['starts_at']),
+                'current_period_end' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                'starts_at' => Carbon::parse($subscription['started_at'] ?? $subscription['created_at']),
+                'expires_at' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                'paddle_data' => json_encode($subscription)
+            ]);
 
             Log::info('Subscription created/updated', [
                 'user_id' => $user->id,
@@ -415,19 +494,29 @@ class PaddleWebhookController extends Controller
 
             $user = $userSubscription->user;
 
-            // Downgrade user to basic plan
-            if ($user && method_exists($user, 'downgradeToBasic')) {
-                $user->downgradeToBasic('paddle_cancelled');
-            }
+            // Get basic package
+            $basicPackage = $this->getBasicPackage();
 
+            // Downgrade to basic package
             $userSubscription->update([
-                'status' => 'canceled',
+                'package_id' => $basicPackage->id,
+                'status' => 'active', // Keep active but on basic plan
+                'paddle_subscription_id' => null, // Remove Paddle details
+                'paddle_user_id' => null,
+                'paddle_plan_id' => null,
+                'expires_at' => null, // Basic plan doesn't expire
+                'current_period_start' => null,
+                'current_period_end' => null,
                 'cancelled_at' => now(),
-                'paddle_data' => json_encode($subscription)
+                'paddle_data' => json_encode([
+                    'reason' => 'subscription_canceled',
+                    'canceled_subscription' => $subscription,
+                    'downgraded_at' => now()
+                ])
             ]);
 
-            Log::info('Subscription canceled successfully', [
-                'user_id' => $userSubscription->user_id,
+            Log::info('User downgraded to basic plan due to subscription cancellation', [
+                'user_id' => $user->id,
                 'subscription_id' => $userSubscription->id
             ]);
 

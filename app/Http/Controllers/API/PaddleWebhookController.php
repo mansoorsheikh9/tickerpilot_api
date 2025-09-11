@@ -1,9 +1,7 @@
 <?php
 
+namespace App\Http\Controllers;
 
-namespace App\Http\Controllers\API;
-
-use App\Http\Controllers\Controller;
 use App\Models\Package;
 use App\Models\UserSubscription;
 use App\Services\PaddleService;
@@ -149,20 +147,35 @@ class PaddleWebhookController extends Controller
 
     protected function findUserByCustomerId($customerId)
     {
-        // First try: Find user through existing subscription
-        $existingSubscription = UserSubscription::where('paddle_user_id', $customerId)->first();
-
-        if ($existingSubscription) {
-            return $existingSubscription->user;
-        }
-
-        // Second try: Get user info from Paddle customer data
+        // Get customer data from Paddle API
         $customerData = $this->paddleService->getCustomer($customerId);
-        if ($customerData && isset($customerData['custom_data']['user_id'])) {
-            return \App\Models\User::find($customerData['custom_data']['user_id']);
+
+        if (!$customerData || !isset($customerData['email'])) {
+            Log::error('Could not get customer email from Paddle', [
+                'customer_id' => $customerId,
+                'customer_data' => $customerData
+            ]);
+            return null;
         }
 
-        return null;
+        // Find user by email (solid approach since Paddle customer is created with user's email)
+        $user = \App\Models\User::where('email', $customerData['email'])->first();
+
+        if (!$user) {
+            Log::error('No user found with email from Paddle customer', [
+                'customer_id' => $customerId,
+                'email' => $customerData['email']
+            ]);
+            return null;
+        }
+
+        Log::info('Found user by email from Paddle customer', [
+            'user_id' => $user->id,
+            'customer_id' => $customerId,
+            'email' => $customerData['email']
+        ]);
+
+        return $user;
     }
 
     protected function getBasicPackage()

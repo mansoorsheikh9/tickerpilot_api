@@ -211,7 +211,7 @@ class User extends Authenticatable
             'user_id' => $this->id,
             'package_id' => $basicPackage->id,
             'starts_at' => now(),
-            'expires_at' => null, // Basic never expires
+            'expires_at' => null,
             'status' => 'active',
             'metadata' => [
                 'auto_created' => true,

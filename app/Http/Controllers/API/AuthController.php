@@ -254,18 +254,7 @@ class AuthController extends Controller
     public function getUserByIdOrEmail(string $idOrEmail): JsonResponse
     {
         try {
-            // Try to find user by ID first (if numeric), then by email
-            $user = null;
-
-            if (is_numeric($idOrEmail)) {
-                $user = User::find($idOrEmail);
-            }
-
-            // If not found by ID or if not numeric, try by email
-            if (!$user) {
-                $user = User::where('email', $idOrEmail)->first();
-            }
-
+            $user = User::where('id', $idOrEmail)->orWhere('email', $idOrEmail)->first();
             if (!$user) {
                 return response()->json([
                     'success' => false,

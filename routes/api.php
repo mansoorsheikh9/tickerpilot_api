@@ -20,34 +20,11 @@ Route::get('user/{idOrEmail}', [AuthController::class, 'getUserByIdOrEmail']);
 // Paddle webhook (must be outside auth middleware)
 Route::post('subscription/webhook', [SubscriptionController::class, 'webhook'])->name('paddle.webhook');
 
-// Update the test route to verify v1 API
-Route::get('/test-paddle', function() {
-    $paddleService = new \App\Services\PaddleService();
-
-    // Test connection
-    $connection = $paddleService->testConnection();
-
-    // Test a simple API call to verify v1 endpoint
-    $response = Http::withHeaders([
-        'Authorization' => 'Bearer ' . config('paddle.api_key'),
-    ])->get('https://sandbox-api.paddle.com/v1/products', ['per_page' => 1]);
-
-    return response()->json([
-        'api_connection' => $connection,
-        'v1_test_status' => $response->status(),
-        'v1_test_success' => $response->successful(),
-        'environment' => config('paddle.environment'),
-        'base_url' => 'https://sandbox-api.paddle.com/v1',
-        'checkout_url' => 'https://sandbox-api.paddle.com/v1/checkout'
-    ]);
-});
-
 // Authenticated routes
 Route::middleware('auth:api')->group(function () {
     // Auth routes
     Route::post('logout', [AuthController::class, 'logout']);
     Route::get('user', [AuthController::class, 'user']);
-    Route::post('request-upgrade', [AuthController::class, 'requestUpgrade']);
     Route::post('convert-to-email-auth', [AuthController::class, 'convertToEmailAuth']);
 
     // User package limits
@@ -62,7 +39,7 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('subscription')->group(function () {
         Route::post('create-transaction', [SubscriptionController::class, 'createTransaction'])->name('subscription.create-transaction');
         // Subscription management
-        Route::get('status/id', [SubscriptionController::class, 'status'])->name('subscription.status');
+        Route::get('status', [SubscriptionController::class, 'status'])->name('subscription.status');
         Route::post('cancel', [SubscriptionController::class, 'cancel'])->name('subscription.cancel');
         Route::get('plans', [SubscriptionController::class, 'plans'])->name('subscription.plans');
     });

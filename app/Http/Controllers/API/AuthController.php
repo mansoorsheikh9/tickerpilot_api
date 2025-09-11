@@ -347,43 +347,4 @@ class AuthController extends Controller
             ]
         ]);
     }
-
-    public function requestUpgrade(Request $request): JsonResponse
-    {
-        $user = $request->user();
-
-        if ($user->isPremium()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User already has premium subscription'
-            ], 400);
-        }
-
-        $premiumPackages = Package::where('is_premium', true)
-            ->where('is_active', true)
-            ->get();
-
-        if ($premiumPackages->isEmpty()) {
-            $whatsappNumber = env('WHATSAPP_NUMBER', '+1234567890');
-            $message = urlencode("Hi! I'm interested in upgrading to Premium for TickerPilot. My email: {$user->email}");
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Upgrade request received',
-                'data' => [
-                    'whatsapp_url' => "https://wa.me/{$whatsappNumber}?text={$message}",
-                    'whatsapp_number' => $whatsappNumber,
-                ]
-            ]);
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Premium packages available',
-            'data' => [
-                'packages' => $premiumPackages,
-                'current_package' => $user->getCurrentPackage()
-            ]
-        ]);
-    }
 }

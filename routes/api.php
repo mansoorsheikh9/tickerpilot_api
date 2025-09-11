@@ -1,13 +1,13 @@
 <?php
 
 use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\API\ChartLayoutController;
+use App\Http\Controllers\API\StockController;
+use App\Http\Controllers\API\SubscriptionController;
 use App\Http\Controllers\API\WatchlistController;
 use App\Http\Controllers\API\WatchlistSectionController;
-use App\Http\Controllers\API\StockController;
-use App\Http\Controllers\API\ChartLayoutController;
-use App\Http\Controllers\API\SubscriptionController;
+use App\Http\Controllers\API\PaddleWebhookController;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 
 // Public routes
@@ -18,7 +18,7 @@ Route::post('google-login', [AuthController::class, 'googleLogin']);
 Route::get('user/{idOrEmail}', [AuthController::class, 'getUserByIdOrEmail']);
 
 // Paddle webhook (must be outside auth middleware)
-Route::post('subscription/webhook', [SubscriptionController::class, 'webhook'])->name('paddle.webhook');
+Route::post('subscription/webhook', [PaddleWebhookController::class, 'webhook'])->name('paddle.webhook');
 
 // Authenticated routes
 Route::middleware('auth:api')->group(function () {

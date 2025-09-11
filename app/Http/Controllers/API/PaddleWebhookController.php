@@ -1,15 +1,16 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\API;
 
+use App\Http\Controllers\Controller;
 use App\Models\Package;
-use App\Models\PaddleWebhookEvent;
-use App\Models\User;
 use App\Models\UserSubscription;
 use App\Services\PaddleService;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class PaddleWebhookController extends Controller
 {
@@ -20,315 +21,422 @@ class PaddleWebhookController extends Controller
         $this->paddleService = $paddleService;
     }
 
-    public function handle(Request $request)
+    public function webhook(Request $request)
     {
         try {
-            // Billing API webhook signature verification
             $signature = $request->header('Paddle-Signature');
-            $timestamp = $request->header('Paddle-Timestamp');
-            $rawBody = $request->getContent();
+            $payload = $request->getContent(); // Get raw payload
 
-            if (!$this->paddleService->verifyWebhook($rawBody, $signature, $timestamp)) {
-                Log::warning('Invalid Paddle webhook signature');
-                return response('Invalid signature', 401);
+            // Enhanced signature verification with better error handling
+            if (!$this->paddleService->verifyWebhook($payload, $signature)) {
+                Log::warning('Invalid webhook signature', [
+                    'signature' => $signature,
+                    'payload_length' => strlen($payload),
+                    'headers' => $request->headers->all(),
+                    'ip' => $request->ip()
+                ]);
+
+                return response()->json(['error' => 'Invalid signature'], 400);
             }
 
-            $data = $request->json()->all();
-            $eventType = $data['event_type'] ?? 'unknown';
-            $eventId = $data['event_id'] ?? null;
+            $eventData = json_decode($payload, true);
 
-            Log::info('Paddle Billing API webhook received', [
+            if (!$eventData) {
+                Log::error('Invalid JSON payload', [
+                    'payload' => substr($payload, 0, 500) // Log first 500 chars
+                ]);
+                return response()->json(['error' => 'Invalid JSON'], 400);
+            }
+
+            $eventType = $eventData['event_type'] ?? null;
+            $eventId = $eventData['event_id'] ?? null;
+
+            Log::info('Received Paddle webhook', [
                 'event_type' => $eventType,
                 'event_id' => $eventId
             ]);
 
-            // Check if we've already processed this event
+            // Check for duplicate events
             if ($eventId) {
-                $existingEvent = PaddleWebhookEvent::where('paddle_event_id', $eventId)->first();
+                $existingEvent = DB::table('paddle_webhook_events')
+                    ->where('paddle_event_id', $eventId)
+                    ->first();
+
                 if ($existingEvent) {
-                    Log::info('Webhook already processed', ['event_id' => $eventId]);
-                    return response('OK');
+                    Log::info('Duplicate webhook event ignored', ['event_id' => $eventId]);
+                    return response()->json(['received' => true]);
                 }
             }
 
-            // Store the event
-            $webhookEvent = null;
-            if ($eventId) {
-                $webhookEvent = PaddleWebhookEvent::create([
-                    'paddle_event_id' => $eventId,
-                    'event_type' => $eventType,
-                    'event_data' => $data
-                ]);
-            }
-
-            // Handle different webhook types
-            switch ($eventType) {
-                case 'subscription.created':
-                    $this->handleSubscriptionCreated($data, $webhookEvent);
-                    break;
-                case 'subscription.updated':
-                    $this->handleSubscriptionUpdated($data, $webhookEvent);
-                    break;
-                case 'subscription.canceled':
-                    $this->handleSubscriptionCancelled($data, $webhookEvent);
-                    break;
-                case 'transaction.completed':
-                    $this->handleTransactionCompleted($data, $webhookEvent);
-                    break;
-                case 'transaction.payment_failed':
-                    $this->handlePaymentFailed($data, $webhookEvent);
-                    break;
-                default:
-                    Log::info('Unhandled webhook type', ['event_type' => $eventType]);
-            }
-
-            // Mark event as processed
-            if ($webhookEvent) {
-                $webhookEvent->markAsProcessed();
-            }
-
-            return response('OK');
-
-        } catch (\Exception $e) {
-            Log::error('Error processing Paddle webhook', [
-                'error' => $e->getMessage(),
-                'data' => $request->all()
+            // Store webhook event for debugging and auditing
+            $webhookEventId = Str::uuid();
+            DB::table('paddle_webhook_events')->insert([
+                'id' => $webhookEventId,
+                'paddle_event_id' => $eventId,
+                'event_type' => $eventType,
+                'event_data' => json_encode($eventData),
+                'signature' => $signature,
+                'created_at' => now(),
+                'updated_at' => now()
             ]);
 
-            return response('Error', 500);
+            // Process the webhook event
+            $this->processWebhookEvent($eventType, $eventData['data'], $webhookEventId);
+
+            return response()->json(['received' => true]);
+
+        } catch (\Exception $e) {
+            Log::error('Webhook processing error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'payload_length' => isset($payload) ? strlen($payload) : 0
+            ]);
+
+            return response()->json(['error' => 'Webhook processing failed'], 500);
         }
     }
 
-    protected function handleSubscriptionCreated($data, $webhookEvent = null)
+    protected function processWebhookEvent($eventType, $data, $webhookEventId)
     {
         try {
-            $subscriptionData = $data['data'] ?? [];
-            $customData = $subscriptionData['custom_data'] ?? [];
+            switch ($eventType) {
+                case 'transaction.completed':
+                    $this->handleTransactionCompleted($data);
+                    break;
 
-            $userId = $customData['user_id'] ?? null;
-            $packageId = $customData['package_id'] ?? null;
+                case 'transaction.payment_failed':
+                    $this->handleTransactionFailed($data);
+                    break;
 
-            if (!$userId) {
-                Log::error('No user ID in subscription created webhook', ['data' => $data]);
-                return;
+                case 'subscription.created':
+                    $this->handleSubscriptionCreated($data);
+                    break;
+
+                case 'subscription.updated':
+                    $this->handleSubscriptionUpdated($data);
+                    break;
+
+                case 'subscription.canceled':
+                    $this->handleSubscriptionCanceled($data);
+                    break;
+
+                default:
+                    Log::info('Unhandled webhook event', ['event_type' => $eventType]);
             }
 
-            $user = User::find($userId);
-            if (!$user) {
-                Log::error('User not found for subscription', ['user_id' => $userId]);
-                return;
-            }
+            // Mark as processed
+            DB::table('paddle_webhook_events')
+                ->where('id', $webhookEventId)
+                ->update([
+                    'processed_at' => now(),
+                    'updated_at' => now()
+                ]);
 
-            $package = Package::find($packageId);
-            if (!$package) {
-                // Try to find by price_id
-                $priceId = $subscriptionData['items'][0]['price']['id'] ?? null;
-                $package = Package::where('paddle_product_id', $priceId)->first();
+        } catch (\Exception $e) {
+            // Mark as failed
+            DB::table('paddle_webhook_events')
+                ->where('id', $webhookEventId)
+                ->update([
+                    'processing_attempts' => DB::raw('processing_attempts + 1'),
+                    'last_error' => $e->getMessage(),
+                    'updated_at' => now()
+                ]);
 
-                if (!$package) {
-                    Log::error('Package not found for subscription', [
-                        'package_id' => $packageId,
-                        'price_id' => $priceId
-                    ]);
-                    return;
-                }
-            }
+            throw $e; // Re-throw to be caught by main try-catch
+        }
+    }
 
-            $subscription = $user->upgradeToPremium($package->id, [
-                'subscription_id' => $subscriptionData['id'],
-                'customer_id' => $subscriptionData['customer_id'],
-                'status' => $subscriptionData['status'],
-                'current_billing_period' => $subscriptionData['current_billing_period'] ?? null,
+    protected function handleTransactionCompleted($transaction)
+    {
+        try {
+            Log::info('Processing completed transaction', [
+                'transaction_id' => $transaction['id']
             ]);
 
-            if ($webhookEvent) {
-                $webhookEvent->update(['subscription_id' => $subscription->id]);
+            // Extract customer and subscription info
+            $customerId = $transaction['customer_id'] ?? null;
+            $subscriptionId = $transaction['subscription_id'] ?? null;
+
+            if (!$customerId) {
+                Log::error('No customer_id in transaction', [
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
             }
 
-            Log::info('Premium subscription created successfully', [
+            // Find user by paddle customer ID
+            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
+
+            if (!$user) {
+                Log::error('User not found for customer', [
+                    'customer_id' => $customerId,
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
+            }
+
+            // Get package info from the first line item
+            $lineItem = $transaction['details']['line_items'][0] ?? null;
+            if (!$lineItem) {
+                Log::error('No line items in transaction', [
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
+            }
+
+            $productId = $lineItem['product']['id'];
+            $package = Package::where('paddle_product_id', $productId)->first();
+
+            if (!$package) {
+                Log::error('Package not found for product', [
+                    'product_id' => $productId,
+                    'transaction_id' => $transaction['id']
+                ]);
+                return;
+            }
+
+            // Calculate subscription period
+            $billingPeriod = $transaction['billing_period'] ?? null;
+            $startsAt = $billingPeriod ? Carbon::parse($billingPeriod['starts_at']) : now();
+            $endsAt = $billingPeriod ? Carbon::parse($billingPeriod['ends_at']) : now()->addMonth();
+
+            // Create or update subscription
+            $subscription = UserSubscription::updateOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'package_id' => $package->id,
+                    'status' => 'active',
+                    'starts_at' => $startsAt,
+                    'expires_at' => $endsAt,
+                    'paddle_subscription_id' => $subscriptionId,
+                    'paddle_user_id' => $customerId,
+                    'paddle_plan_id' => $productId,
+                    'current_period_start' => $startsAt,
+                    'current_period_end' => $endsAt,
+                    'paddle_data' => json_encode($transaction)
+                ]
+            );
+
+            Log::info('Subscription activated from transaction', [
                 'user_id' => $user->id,
                 'subscription_id' => $subscription->id,
-                'paddle_subscription_id' => $subscriptionData['id'],
-                'package_name' => $package->name
+                'transaction_id' => $transaction['id']
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error handling subscription created webhook', [
+            Log::error('Error handling completed transaction', [
                 'error' => $e->getMessage(),
-                'data' => $data
+                'transaction_id' => $transaction['id'] ?? null,
+                'trace' => $e->getTraceAsString()
             ]);
+            throw $e;
         }
     }
 
-    protected function handleSubscriptionUpdated($data, $webhookEvent = null)
+    protected function handleTransactionFailed($transaction)
     {
         try {
-            $subscription = UserSubscription::where('paddle_subscription_id', $data['subscription_id'])->first();
+            Log::info('Processing failed transaction', [
+                'transaction_id' => $transaction['id']
+            ]);
 
-            if (!$subscription) {
-                Log::error('Subscription not found for update', ['paddle_subscription_id' => $data['subscription_id']]);
+            $customerId = $transaction['customer_id'] ?? null;
+
+            if (!$customerId) {
+                Log::warning('No customer_id in failed transaction', [
+                    'transaction_id' => $transaction['id']
+                ]);
                 return;
             }
 
-            $newPeriodEnd = isset($data['next_bill_date']) ?
-                Carbon::parse($data['next_bill_date']) :
-                $subscription->current_period_end;
+            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
 
-            $subscription->update([
-                'status' => $data['status'] === 'active' ? 'active' : $data['status'],
-                'expires_at' => $newPeriodEnd,
-                'current_period_end' => $newPeriodEnd,
-                'paddle_data' => array_merge($subscription->paddle_data ?? [], $data)
+            if ($user) {
+                // Handle failed payment - maybe send notification, update subscription status, etc.
+                Log::info('Payment failed for user', [
+                    'user_id' => $user->id,
+                    'transaction_id' => $transaction['id']
+                ]);
+
+                // Optional: Update subscription status to 'past_due' or similar
+                $subscription = UserSubscription::where('user_id', $user->id)
+                    ->where('paddle_subscription_id', $transaction['subscription_id'] ?? null)
+                    ->first();
+
+                if ($subscription) {
+                    $subscription->update([
+                        'status' => 'past_due',
+                        'paddle_data' => json_encode($transaction)
+                    ]);
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Error handling failed transaction', [
+                'error' => $e->getMessage(),
+                'transaction_id' => $transaction['id'] ?? null
+            ]);
+            throw $e;
+        }
+    }
+
+    protected function handleSubscriptionCreated($subscription)
+    {
+        try {
+            Log::info('Processing created subscription', [
+                'subscription_id' => $subscription['id']
             ]);
 
-            if ($webhookEvent) {
-                $webhookEvent->update(['subscription_id' => $subscription->id]);
+            $customerId = $subscription['customer_id'] ?? null;
+
+            if (!$customerId) {
+                Log::error('Missing customer_id in subscription', [
+                    'subscription_id' => $subscription['id']
+                ]);
+                return;
             }
+
+            // Find user by paddle customer ID
+            $user = \App\Models\User::where('paddle_customer_id', $customerId)->first();
+
+            if (!$user) {
+                Log::error('User not found for subscription', [
+                    'customer_id' => $customerId,
+                    'subscription_id' => $subscription['id']
+                ]);
+                return;
+            }
+
+            // Get package from subscription items
+            $item = $subscription['items'][0] ?? null;
+            if (!$item) {
+                Log::error('No items in subscription', [
+                    'subscription_id' => $subscription['id']
+                ]);
+                return;
+            }
+
+            $productId = $item['product']['id'];
+            $package = Package::where('paddle_product_id', $productId)->first();
+
+            if (!$package) {
+                Log::error('Package not found for subscription product', [
+                    'product_id' => $productId,
+                    'subscription_id' => $subscription['id']
+                ]);
+                return;
+            }
+
+            UserSubscription::updateOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'package_id' => $package->id,
+                    'status' => $subscription['status'],
+                    'paddle_subscription_id' => $subscription['id'],
+                    'paddle_user_id' => $subscription['customer_id'],
+                    'paddle_plan_id' => $productId,
+                    'current_period_start' => Carbon::parse($subscription['current_billing_period']['starts_at']),
+                    'current_period_end' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                    'starts_at' => Carbon::parse($subscription['started_at'] ?? $subscription['created_at']),
+                    'expires_at' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                    'paddle_data' => json_encode($subscription)
+                ]
+            );
+
+            Log::info('Subscription created/updated', [
+                'user_id' => $user->id,
+                'paddle_subscription_id' => $subscription['id']
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error handling created subscription', [
+                'error' => $e->getMessage(),
+                'subscription_id' => $subscription['id'] ?? null,
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+    }
+
+    protected function handleSubscriptionUpdated($subscription)
+    {
+        try {
+            Log::info('Processing updated subscription', [
+                'subscription_id' => $subscription['id']
+            ]);
+
+            $userSubscription = UserSubscription::where('paddle_subscription_id', $subscription['id'])->first();
+
+            if (!$userSubscription) {
+                Log::warning('Subscription not found for update', [
+                    'paddle_subscription_id' => $subscription['id']
+                ]);
+                return;
+            }
+
+            $userSubscription->update([
+                'status' => $subscription['status'],
+                'current_period_start' => Carbon::parse($subscription['current_billing_period']['starts_at']),
+                'current_period_end' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                'expires_at' => Carbon::parse($subscription['current_billing_period']['ends_at']),
+                'paddle_data' => json_encode($subscription)
+            ]);
 
             Log::info('Subscription updated successfully', [
-                'subscription_id' => $subscription->id,
-                'new_status' => $data['status']
+                'user_id' => $userSubscription->user_id,
+                'subscription_id' => $userSubscription->id,
+                'new_status' => $subscription['status']
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error handling subscription updated webhook', [
+            Log::error('Error handling updated subscription', [
                 'error' => $e->getMessage(),
-                'data' => $data
+                'subscription_id' => $subscription['id'] ?? null
             ]);
+            throw $e;
         }
     }
 
-    protected function handleSubscriptionCancelled($data, $webhookEvent = null)
+    protected function handleSubscriptionCanceled($subscription)
     {
         try {
-            $subscription = UserSubscription::where('paddle_subscription_id', $data['subscription_id'])->first();
+            Log::info('Processing canceled subscription', [
+                'subscription_id' => $subscription['id']
+            ]);
 
-            if (!$subscription) {
-                Log::error('Subscription not found for cancellation', ['paddle_subscription_id' => $data['subscription_id']]);
+            $userSubscription = UserSubscription::where('paddle_subscription_id', $subscription['id'])->first();
+
+            if (!$userSubscription) {
+                Log::warning('Subscription not found for cancellation', [
+                    'paddle_subscription_id' => $subscription['id']
+                ]);
                 return;
             }
 
-            $user = $subscription->user;
-            $basicSubscription = $user->downgradeToBasic('subscription_cancelled');
+            $user = $userSubscription->user;
 
-            if ($webhookEvent) {
-                $webhookEvent->update(['subscription_id' => $basicSubscription->id]);
+            // Downgrade user to basic plan
+            if ($user && method_exists($user, 'downgradeToBasic')) {
+                $user->downgradeToBasic('paddle_cancelled');
             }
 
-            Log::info('Subscription cancelled and user downgraded to basic', [
-                'original_subscription_id' => $subscription->id,
-                'new_basic_subscription_id' => $basicSubscription->id,
-                'user_id' => $user->id
+            $userSubscription->update([
+                'status' => 'canceled',
+                'cancelled_at' => now(),
+                'paddle_data' => json_encode($subscription)
+            ]);
+
+            Log::info('Subscription canceled successfully', [
+                'user_id' => $userSubscription->user_id,
+                'subscription_id' => $userSubscription->id
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error handling subscription cancelled webhook', [
+            Log::error('Error handling canceled subscription', [
                 'error' => $e->getMessage(),
-                'data' => $data
+                'subscription_id' => $subscription['id'] ?? null
             ]);
-        }
-    }
-
-    protected function handlePaymentSucceeded($data, $webhookEvent = null)
-    {
-        try {
-            $subscription = UserSubscription::where('paddle_subscription_id', $data['subscription_id'])->first();
-
-            if (!$subscription) {
-                Log::error('Subscription not found for payment success', ['paddle_subscription_id' => $data['subscription_id']]);
-                return;
-            }
-
-            $newPeriodEnd = isset($data['next_bill_date']) ?
-                Carbon::parse($data['next_bill_date']) :
-                now()->addMonth();
-
-            $package = $subscription->package;
-            $newPeriodStart = $package && $package->billing_cycle === 'yearly' ?
-                $newPeriodEnd->copy()->subYear() :
-                $newPeriodEnd->copy()->subMonth();
-
-            $subscription->update([
-                'status' => 'active',
-                'expires_at' => $newPeriodEnd,
-                'current_period_start' => $newPeriodStart,
-                'current_period_end' => $newPeriodEnd,
-                'paddle_data' => array_merge($subscription->paddle_data ?? [], $data)
-            ]);
-
-            if ($webhookEvent) {
-                $webhookEvent->update(['subscription_id' => $subscription->id]);
-            }
-
-            Log::info('Payment succeeded for subscription', [
-                'subscription_id' => $subscription->id,
-                'amount' => $data['sale_gross'] ?? 'unknown',
-                'next_bill_date' => $newPeriodEnd
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Error handling payment succeeded webhook', [
-                'error' => $e->getMessage(),
-                'data' => $data
-            ]);
-        }
-    }
-
-    protected function handlePaymentFailed($data, $webhookEvent = null)
-    {
-        try {
-            $subscription = UserSubscription::where('paddle_subscription_id', $data['subscription_id'])->first();
-
-            if (!$subscription) {
-                Log::error('Subscription not found for payment failure', ['paddle_subscription_id' => $data['subscription_id']]);
-                return;
-            }
-
-            $user = $subscription->user;
-            $attemptCount = $data['attempt_number'] ?? 1;
-            $maxAttempts = 3;
-
-            if ($attemptCount >= $maxAttempts || isset($data['hard_failure']) && $data['hard_failure']) {
-                Log::warning('Payment failed - downgrading user to basic package', [
-                    'subscription_id' => $subscription->id,
-                    'user_id' => $user->id,
-                    'attempt_number' => $attemptCount,
-                    'amount' => $data['amount'] ?? 'unknown'
-                ]);
-
-                $basicSubscription = $user->downgradeToBasic('payment_failed');
-
-                if ($webhookEvent) {
-                    $webhookEvent->update(['subscription_id' => $basicSubscription->id]);
-                }
-
-                Log::info('User downgraded to basic package due to payment failure', [
-                    'user_id' => $user->id,
-                    'original_subscription_id' => $subscription->id,
-                    'new_basic_subscription_id' => $basicSubscription->id
-                ]);
-            } else {
-                $subscription->update([
-                    'status' => 'past_due',
-                    'paddle_data' => array_merge($subscription->paddle_data ?? [], $data)
-                ]);
-
-                if ($webhookEvent) {
-                    $webhookEvent->update(['subscription_id' => $subscription->id]);
-                }
-
-                Log::info('Payment failed but will retry', [
-                    'subscription_id' => $subscription->id,
-                    'attempt_number' => $attemptCount,
-                    'max_attempts' => $maxAttempts
-                ]);
-            }
-
-        } catch (\Exception $e) {
-            Log::error('Error handling payment failed webhook', [
-                'error' => $e->getMessage(),
-                'data' => $data
-            ]);
+            throw $e;
         }
     }
 }

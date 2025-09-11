@@ -41,6 +41,11 @@ class PaddleService
                 throw new \Exception('Failed to create customer');
             }
 
+            // Store paddle customer ID in user record for webhook processing
+            if (!$user->paddle_customer_id) {
+                $user->update(['paddle_customer_id' => $customer['id']]);
+            }
+
             // Create the transaction
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
@@ -108,6 +113,14 @@ class PaddleService
     protected function createOrGetCustomer($user)
     {
         try {
+            // Check if user already has a paddle customer ID
+            if ($user->paddle_customer_id) {
+                $customer = $this->getCustomer($user->paddle_customer_id);
+                if ($customer) {
+                    return $customer;
+                }
+            }
+
             // Search for existing customer by email
             $searchResponse = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
@@ -119,11 +132,16 @@ class PaddleService
             if ($searchResponse->successful()) {
                 $searchData = $searchResponse->json();
                 if (!empty($searchData['data'])) {
+                    $customer = $searchData['data'][0];
+
+                    // Update user with paddle customer ID
+                    $user->update(['paddle_customer_id' => $customer['id']]);
+
                     Log::info('Found existing Paddle customer', [
-                        'customer_id' => $searchData['data'][0]['id'],
+                        'customer_id' => $customer['id'],
                         'user_id' => $user->id
                     ]);
-                    return $searchData['data'][0];
+                    return $customer;
                 }
             }
 
@@ -151,13 +169,17 @@ class PaddleService
             }
 
             $customerData = $createResponse->json();
+            $customer = $customerData['data'];
+
+            // Update user with paddle customer ID
+            $user->update(['paddle_customer_id' => $customer['id']]);
 
             Log::info('Created new Paddle customer', [
-                'customer_id' => $customerData['data']['id'],
+                'customer_id' => $customer['id'],
                 'user_id' => $user->id
             ]);
 
-            return $customerData['data'];
+            return $customer;
 
         } catch (\Exception $e) {
             Log::error('Error creating/getting Paddle customer', [
@@ -271,29 +293,87 @@ class PaddleService
     }
 
     /**
-     * Verify webhook signature
+     * Verify webhook signature - FIXED METHOD
      */
     public function verifyWebhook($payload, $signature)
     {
-        if (!$signature || !$this->webhookSecret) {
-            return false;
-        }
-
         try {
-            // Paddle uses HMAC SHA256 with the webhook secret
-            $expectedSignature = hash_hmac('sha256', $payload, $this->webhookSecret);
-
-            // Paddle sends signature in format: h1=<signature>
-            $providedSignature = '';
-            if (preg_match('/h1=([a-f0-9]+)/', $signature, $matches)) {
-                $providedSignature = $matches[1];
+            if (empty($this->webhookSecret)) {
+                Log::error('Paddle webhook secret not configured');
+                return false;
             }
 
-            return hash_equals($expectedSignature, $providedSignature);
+            if (empty($signature)) {
+                Log::error('No signature provided in webhook');
+                return false;
+            }
+
+            // Parse the signature header - Paddle format: ts=timestamp;h1=signature
+            $signatures = [];
+            foreach (explode(';', $signature) as $pair) {
+                if (strpos($pair, '=') !== false) {
+                    [$key, $value] = explode('=', $pair, 2);
+                    $signatures[trim($key)] = trim($value);
+                }
+            }
+
+            $timestamp = $signatures['ts'] ?? '';
+            $h1 = $signatures['h1'] ?? '';
+
+            if (empty($timestamp) || empty($h1)) {
+                Log::error('Missing timestamp or signature in Paddle-Signature header', [
+                    'parsed_signatures' => $signatures,
+                    'raw_signature' => $signature
+                ]);
+                return false;
+            }
+
+            // Check timestamp to prevent replay attacks (optional but recommended)
+            $currentTime = time();
+            $webhookTime = (int) $timestamp;
+            $timeDifference = abs($currentTime - $webhookTime);
+
+            // Allow 5 minutes of time difference
+            if ($timeDifference > 300) {
+                Log::warning('Webhook timestamp too old', [
+                    'webhook_time' => $webhookTime,
+                    'current_time' => $currentTime,
+                    'difference' => $timeDifference
+                ]);
+                // Uncomment the next line in production for stricter security
+                // return false;
+            }
+
+            // Create the signed payload: timestamp + ':' + raw_body
+            $signedPayload = $timestamp . ':' . $payload;
+
+            // Calculate the expected signature
+            $expectedSignature = hash_hmac('sha256', $signedPayload, $this->webhookSecret);
+
+            $isValid = hash_equals($expectedSignature, $h1);
+
+            if (!$isValid) {
+                Log::error('Signature verification failed', [
+                    'expected' => $expectedSignature,
+                    'received' => $h1,
+                    'timestamp' => $timestamp,
+                    'payload_length' => strlen($payload),
+                    'webhook_secret_length' => strlen($this->webhookSecret)
+                ]);
+            } else {
+                Log::debug('Webhook signature verified successfully', [
+                    'timestamp' => $timestamp,
+                    'payload_length' => strlen($payload)
+                ]);
+            }
+
+            return $isValid;
 
         } catch (\Exception $e) {
             Log::error('Error verifying webhook signature', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'signature' => $signature,
+                'trace' => $e->getTraceAsString()
             ]);
             return false;
         }

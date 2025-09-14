@@ -192,7 +192,7 @@ class User extends Authenticatable
     public function createBasicSubscription()
     {
         $basicPackage = Package::where('price', 0.00)
-            ->where('is_premium', false)
+            ->where('is_premium', true)
             ->where('is_active', true)
             ->first();
 
@@ -218,84 +218,5 @@ class User extends Authenticatable
                 'created_reason' => 'ensure_basic_subscription'
             ]
         ]);
-    }
-
-    public function upgradeToPremium($premiumPackageId, $paddleData = null)
-    {
-        $premiumPackage = Package::where('id', $premiumPackageId)
-            ->where('is_premium', true)
-            ->where('is_active', true)
-            ->first();
-
-        if (!$premiumPackage) {
-            throw new \Exception('Premium package not found');
-        }
-
-        // Cancel current subscription
-        $this->subscriptions()->where('status', 'active')->update([
-            'status' => 'replaced',
-            'cancelled_at' => now()
-        ]);
-
-        // Calculate period dates
-        $currentPeriodEnd = null;
-        $currentPeriodStart = now();
-
-        if ($paddleData) {
-            if (isset($paddleData['next_bill_date'])) {
-                $currentPeriodEnd = \Carbon\Carbon::parse($paddleData['next_bill_date']);
-                $currentPeriodStart = $premiumPackage->billing_cycle === 'yearly' ?
-                    $currentPeriodEnd->copy()->subYear() :
-                    $currentPeriodEnd->copy()->subMonth();
-            }
-        }
-
-        // Create premium subscription
-        $subscriptionData = [
-            'user_id' => $this->id,
-            'package_id' => $premiumPackage->id,
-            'starts_at' => $currentPeriodStart,
-            'expires_at' => $currentPeriodEnd,
-            'status' => 'active',
-            'metadata' => [
-                'upgraded_from_basic' => true,
-                'upgrade_date' => now()
-            ]
-        ];
-
-        // Add Paddle data if provided
-        if ($paddleData) {
-            $subscriptionData['paddle_subscription_id'] = $paddleData['subscription_id'] ?? null;
-            $subscriptionData['paddle_user_id'] = $paddleData['user_id'] ?? null;
-            $subscriptionData['paddle_plan_id'] = $paddleData['subscription_plan_id'] ?? null;
-            $subscriptionData['current_period_start'] = $currentPeriodStart;
-            $subscriptionData['current_period_end'] = $currentPeriodEnd;
-            $subscriptionData['paddle_data'] = $paddleData;
-        }
-
-        return UserSubscription::create($subscriptionData);
-    }
-
-    public function downgradeToBasic($reason = 'payment_failed')
-    {
-        // Cancel current premium subscription
-        $this->subscriptions()->where('status', 'active')->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now()
-        ]);
-
-        // Create Basic subscription
-        $basicSubscription = $this->createBasicSubscription();
-
-        // Update metadata to track downgrade
-        $basicSubscription->update([
-            'metadata' => array_merge($basicSubscription->metadata ?? [], [
-                'downgraded_from_premium' => true,
-                'downgrade_reason' => $reason,
-                'downgraded_at' => now()
-            ])
-        ]);
-
-        return $basicSubscription;
     }
 }

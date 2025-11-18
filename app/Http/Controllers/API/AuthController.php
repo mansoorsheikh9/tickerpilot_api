@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -335,5 +336,127 @@ class AuthController extends Controller
                 'user' => $user->load('activeSubscription.package'),
             ]
         ]);
+    }
+
+    /**
+     * Send password reset link to user's email
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        try {
+            $user = User::where('email', $request->email)->first();
+
+            if (!$user) {
+                // Return success even if user doesn't exist (security best practice)
+                return response()->json([
+                    'success' => true,
+                    'message' => 'If an account exists with this email, you will receive a password reset link shortly.'
+                ]);
+            }
+
+            // Check if user signed up with Google
+            if ($user->provider === 'google') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This account uses Google Sign-In. Please sign in with Google instead.'
+                ], 400);
+            }
+
+            if (!$user->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This account is inactive. Please contact support.'
+                ], 403);
+            }
+
+            // Send password reset email
+            Password::sendResetLink(['email' => $request->email]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Password reset link has been sent to your email.'
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Forgot password failed', [
+                'email' => $request->email,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send reset link. Please try again.'
+            ], 500);
+        }
+    }
+
+    /**
+     * Reset password using token
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'password' => 'required|string|min:8|confirmed',
+            'token' => 'required|string',
+        ]);
+
+        try {
+            $user = User::where('email', $request->email)->first();
+
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not found.'
+                ], 404);
+            }
+
+            // Check if user signed up with Google
+            if ($user->provider === 'google') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This account uses Google Sign-In. Password reset is not available.'
+                ], 400);
+            }
+
+            $status = Password::reset(
+                $request->only('email', 'password', 'password_confirmation', 'token'),
+                function ($user, $password) {
+                    $user->forceFill([
+                        'password' => Hash::make($password)
+                    ])->save();
+
+                    // Revoke all existing tokens
+                    $user->tokens()->delete();
+                }
+            );
+
+            if ($status === Password::PASSWORD_RESET) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Password has been reset successfully. You can now sign in with your new password.'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired password reset token.'
+            ], 400);
+
+        } catch (\Throwable $e) {
+            Log::error('Password reset failed', [
+                'email' => $request->email,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to reset password. Please try again.'
+            ], 500);
+        }
     }
 }

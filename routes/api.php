@@ -15,6 +15,11 @@ Route::post('register', [AuthController::class, 'register']);
 Route::post('login', [AuthController::class, 'login']);
 Route::post('google-login', [AuthController::class, 'googleLogin']);
 
+// Password Reset Routes
+Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('reset-password', [AuthController::class, 'resetPassword']);
+
+
 Route::get('user/{idOrEmail}', [AuthController::class, 'getUserByIdOrEmail']);
 
 // Paddle webhook (must be outside auth middleware)

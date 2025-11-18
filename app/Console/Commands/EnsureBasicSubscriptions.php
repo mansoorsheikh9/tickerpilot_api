@@ -136,7 +136,7 @@ class EnsureBasicSubscriptions extends Command
             $this->info("\nUsers without active subscriptions:");
             $this->table(['ID', 'Name', 'Email', 'Provider'],
                 $usersWithoutSubscriptions->map(function($user) {
-                    return [$user->id, $user->name, $user->email, $user->provider ?? 'email'];
+                    return [$user->id, $user->name, $user->email, $user->provider ?? 'emails'];
                 })->toArray()
             );
         }

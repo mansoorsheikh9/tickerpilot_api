@@ -108,12 +108,12 @@ class PaddleService
     protected function createOrGetCustomer($user)
     {
         try {
-            // Search for existing customer by email first
+            // Search for existing customer by emails first
             $searchResponse = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
             ])->get($this->baseUrl . '/customers', [
-                'email' => [$user->email]
+                'emails' => [$user->email]
             ]);
 
             if ($searchResponse->successful()) {
@@ -132,7 +132,7 @@ class PaddleService
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
             ])->post($this->baseUrl . '/customers', [
-                'email' => $user->email,
+                'emails' => $user->email,
                 'name' => $user->name,
                 'custom_data' => [
                     'user_id' => $user->id,

@@ -46,7 +46,7 @@ class PackageController extends Controller
         // For now, we'll just return the WhatsApp contact info
 
         $whatsappNumber = env('WHATSAPP_NUMBER', '+1234567890');
-        $message = urlencode("Hi! I'm interested in upgrading to the {$package->name} package for SCSTrade Watchlist Manager. My email: {$user->email}");
+        $message = urlencode("Hi! I'm interested in upgrading to the {$package->name} package for SCSTrade Watchlist Manager. My emails: {$user->email}");
 
         return response()->json([
             'success' => true,

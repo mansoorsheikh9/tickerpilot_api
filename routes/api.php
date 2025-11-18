@@ -30,7 +30,7 @@ Route::middleware('auth:api')->group(function () {
     // Auth routes
     Route::post('logout', [AuthController::class, 'logout']);
     Route::get('user', [AuthController::class, 'user']);
-    Route::post('convert-to-email-auth', [AuthController::class, 'convertToEmailAuth']);
+    Route::post('convert-to-emails-auth', [AuthController::class, 'convertToEmailAuth']);
 
     // User package limits
     Route::get('user/package-limits', function (Request $request) {

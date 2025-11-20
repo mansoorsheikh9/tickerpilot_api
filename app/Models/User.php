@@ -14,7 +14,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name',
-        'emails',
+        'email',
         'password',
         'google_id',
         'avatar',
@@ -192,7 +192,7 @@ class User extends Authenticatable
     public function createBasicSubscription()
     {
         $basicPackage = Package::where('price', 0.00)
-            ->where('is_premium', true)
+            ->where('is_premium', false)
             ->where('is_active', true)
             ->first();
 

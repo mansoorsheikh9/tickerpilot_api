@@ -24,7 +24,7 @@ class AuthController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'emails' => 'required|string|emails|max:255|unique:users',
+            'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
@@ -32,9 +32,9 @@ class AuthController extends Controller
         try {
             $user = User::create([
                 'name' => $request->name,
-                'emails' => $request->email,
+                'email' => $request->email,
                 'password' => Hash::make($request->password),
-                'provider' => 'emails',
+                'provider' => 'email',
             ]);
 
             // Create Basic subscription for new user
@@ -55,7 +55,7 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Registration failed', [
-                'emails' => $request->email,
+                'email' => $request->email,
                 'error' => $e->getMessage()
             ]);
 
@@ -70,27 +70,27 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $request->validate([
-            'emails' => 'required|emails',
+            'email' => 'required|email',
             'password' => 'required',
         ]);
 
-        $user = User::where('emails', $request->email)->first();
+        $user = User::where('email', $request->email)->first();
 
         if (!$user) {
             throw ValidationException::withMessages([
-                'emails' => ['The provided credentials are incorrect.'],
+                'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
         if ($user->provider === 'google') {
             throw ValidationException::withMessages([
-                'emails' => ['This account uses Google Sign-In. Please use the Google button above.'],
+                'email' => ['This account uses Google Sign-In. Please use the Google button above.'],
             ]);
         }
 
-        if ($user->provider === 'emails' && (!$user->password || !Hash::check($request->password, $user->password))) {
+        if ($user->provider === 'email' && (!$user->password || !Hash::check($request->password, $user->password))) {
             throw ValidationException::withMessages([
-                'emails' => ['The provided credentials are incorrect.'],
+                'email' => ['The provided credentials are incorrect.'],
             ]);
         }
 
@@ -133,17 +133,17 @@ class AuthController extends Controller
             }
 
             $googleId = $payload['sub'];
-            $email = $payload['emails'];
+            $email = $payload['email'];
             $name = $payload['name'];
             $avatar = $payload['picture'] ?? null;
 
             $user = User::where('google_id', $googleId)->first();
 
             if (!$user) {
-                $existingUser = User::where('emails', $email)->first();
+                $existingUser = User::where('email', $email)->first();
 
                 if ($existingUser) {
-                    if ($existingUser->provider === 'emails') {
+                    if ($existingUser->provider === 'email') {
                         $existingUser->update([
                             'google_id' => $googleId,
                             'avatar' => $avatar,
@@ -156,13 +156,13 @@ class AuthController extends Controller
                         DB::rollBack();
                         return response()->json([
                             'success' => false,
-                            'message' => 'An account with this emails already exists with a different Google account.'
+                            'message' => 'An account with this email already exists with a different Google account.'
                         ], 409);
                     }
                 } else {
                     $user = User::create([
                         'name' => $name,
-                        'emails' => $email,
+                        'email' => $email,
                         'google_id' => $googleId,
                         'avatar' => $avatar,
                         'provider' => 'google',
@@ -173,7 +173,7 @@ class AuthController extends Controller
             } else {
                 $user->update([
                     'name' => $name,
-                    'emails' => $email,
+                    'email' => $email,
                     'avatar' => $avatar,
                 ]);
             }
@@ -202,7 +202,7 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Google login failed', [
-                'emails' => $email ?? 'unknown',
+                'email' => $email ?? 'unknown',
                 'error' => $e->getMessage()
             ]);
 
@@ -253,12 +253,12 @@ class AuthController extends Controller
     }
 
     /**
-     * Public endpoint to get user by ID or emails
+     * Public endpoint to get user by ID or email
      */
     public function getUserByIdOrEmail(string $idOrEmail): JsonResponse
     {
         try {
-            $user = User::where('id', $idOrEmail)->orWhere('emails', $idOrEmail)->first();
+            $user = User::where('id', $idOrEmail)->orWhere('email', $idOrEmail)->first();
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -298,7 +298,7 @@ class AuthController extends Controller
                 ]
             ]);
         } catch (\Throwable $e) {
-            Log::error('Get user by ID or emails failed', [
+            Log::error('Get user by ID or email failed', [
                 'id_or_email' => $idOrEmail,
                 'error' => $e->getMessage()
             ]);
@@ -322,19 +322,19 @@ class AuthController extends Controller
         if ($user->provider !== 'google') {
             return response()->json([
                 'success' => false,
-                'message' => 'Only Google users can convert to emails authentication',
+                'message' => 'Only Google users can convert to email authentication',
             ], 400);
         }
 
         $user->update([
             'password' => Hash::make($request->password),
-            'provider' => 'emails',
+            'provider' => 'email',
             'google_id' => null,
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Successfully converted to emails authentication',
+            'message' => 'Successfully converted to email authentication',
             'data' => [
                 'user' => $user->load('activeSubscription.package'),
             ]
@@ -342,22 +342,22 @@ class AuthController extends Controller
     }
 
     /**
-     * Send password reset link to user's emails
+     * Send password reset link to user's email
      */
     public function forgotPassword(Request $request): JsonResponse
     {
         $request->validate([
-            'emails' => 'required|emails',
+            'email' => 'required|email',
         ]);
 
         try {
-            $user = User::where('emails', $request->email)->first();
+            $user = User::where('email', $request->email)->first();
 
             if (!$user) {
                 // Return success even if user doesn't exist (security best practice)
                 return response()->json([
                     'success' => true,
-                    'message' => 'If an account exists with this emails, you will receive a password reset link shortly.'
+                    'message' => 'If an account exists with this email, you will receive a password reset link shortly.'
                 ]);
             }
 
@@ -379,33 +379,33 @@ class AuthController extends Controller
             // Generate password reset token
             $token = Str::random(64);
 
-            // Delete any existing password reset tokens for this emails
+            // Delete any existing password reset tokens for this email
             DB::table('password_reset_tokens')
-                ->where('emails', $user->email)
+                ->where('email', $user->email)
                 ->delete();
 
             // Create new password reset token
             DB::table('password_reset_tokens')->insert([
-                'emails' => $user->email,
+                'email' => $user->email,
                 'token' => Hash::make($token),
                 'created_at' => Carbon::now()
             ]);
 
-            // Send emails with reset link
+            // Send email with reset link
             // You can customize the reset URL to point to your frontend
-            $resetUrl = env('FRONTEND_URL', 'http://localhost:3000') . '/reset-password?token=' . $token . '&emails=' . urlencode($user->email);
+            $resetUrl = env('FRONTEND_URL', 'http://localhost:3000') . '/reset-password?token=' . $token . '&email=' . urlencode($user->email);
 
-            // Send emails (you'll need to create a mailable or use notification)
+            // Send email (you'll need to create a mailable or use notification)
             Mail::to($user->email)->send(new \App\Mail\PasswordResetMail($user, $resetUrl, $token));
 
             return response()->json([
                 'success' => true,
-                'message' => 'Password reset link has been sent to your emails.'
+                'message' => 'Password reset link has been sent to your email.'
             ]);
 
         } catch (\Throwable $e) {
             Log::error('Forgot password failed', [
-                'emails' => $request->email,
+                'email' => $request->email,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -423,13 +423,13 @@ class AuthController extends Controller
     public function resetPassword(Request $request): JsonResponse
     {
         $request->validate([
-            'emails' => 'required|emails',
+            'email' => 'required|email',
             'password' => 'required|string|min:8|confirmed',
             'token' => 'required|string',
         ]);
 
         try {
-            $user = User::where('emails', $request->email)->first();
+            $user = User::where('email', $request->email)->first();
 
             if (!$user) {
                 return response()->json([
@@ -448,7 +448,7 @@ class AuthController extends Controller
 
             // Get the password reset record
             $passwordReset = DB::table('password_reset_tokens')
-                ->where('emails', $request->email)
+                ->where('email', $request->email)
                 ->first();
 
             if (!$passwordReset) {
@@ -469,7 +469,7 @@ class AuthController extends Controller
             // Check if token is expired (60 minutes)
             if (Carbon::parse($passwordReset->created_at)->addMinutes(60)->isPast()) {
                 DB::table('password_reset_tokens')
-                    ->where('emails', $request->email)
+                    ->where('email', $request->email)
                     ->delete();
 
                 return response()->json([
@@ -485,7 +485,7 @@ class AuthController extends Controller
 
             // Delete the password reset token
             DB::table('password_reset_tokens')
-                ->where('emails', $request->email)
+                ->where('email', $request->email)
                 ->delete();
 
             // Revoke all existing tokens
@@ -498,7 +498,7 @@ class AuthController extends Controller
 
         } catch (\Throwable $e) {
             Log::error('Password reset failed', [
-                'emails' => $request->email,
+                'email' => $request->email,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

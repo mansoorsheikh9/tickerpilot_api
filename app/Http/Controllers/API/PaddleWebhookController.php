@@ -151,29 +151,29 @@ class PaddleWebhookController extends Controller
         // Get customer data from Paddle API
         $customerData = $this->paddleService->getCustomer($customerId);
 
-        if (!$customerData || !isset($customerData['emails'])) {
-            Log::error('Could not get customer emails from Paddle', [
+        if (!$customerData || !isset($customerData['email'])) {
+            Log::error('Could not get customer email from Paddle', [
                 'customer_id' => $customerId,
                 'customer_data' => $customerData
             ]);
             return null;
         }
 
-        // Find user by emails (solid approach since Paddle customer is created with user's emails)
-        $user = \App\Models\User::where('emails', $customerData['emails'])->first();
+        // Find user by email (solid approach since Paddle customer is created with user's email)
+        $user = \App\Models\User::where('email', $customerData['email'])->first();
 
         if (!$user) {
-            Log::error('No user found with emails from Paddle customer', [
+            Log::error('No user found with email from Paddle customer', [
                 'customer_id' => $customerId,
-                'emails' => $customerData['emails']
+                'email' => $customerData['email']
             ]);
             return null;
         }
 
-        Log::info('Found user by emails from Paddle customer', [
+        Log::info('Found user by email from Paddle customer', [
             'user_id' => $user->id,
             'customer_id' => $customerId,
-            'emails' => $customerData['emails']
+            'email' => $customerData['email']
         ]);
 
         return $user;

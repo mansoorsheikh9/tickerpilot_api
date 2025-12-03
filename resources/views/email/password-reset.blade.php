@@ -12,7 +12,7 @@
     <!-- Header -->
     <div style="background: #ffffff; padding: 40px 30px; text-align: center;">
         <div style="display: inline-flex; align-items: center; gap: 12px;">
-            <div style="width: 48px; height: 48px; background: #000; color: #fff; border-radius: 10px; display: flex; justify-content: center; align-items: center; font-weight: 700; font-size: 22px; line-height: 1;">
+            <div style="width: 48px; height: 48px; background: #000; color: #fff; border-radius: 10px; display: flex; justify-content: center; align-items: center; font-weight: 700; font-size: 22px; line-height: 1; flex-flow: column;">
                 TP
             </div>
             <div style="font-size: 26px; font-weight: 600; color: #000;">

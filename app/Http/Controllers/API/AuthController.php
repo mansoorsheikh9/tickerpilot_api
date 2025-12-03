@@ -153,6 +153,7 @@ class AuthController extends Controller
                             'provider' => 'google',
                             'email_verified_at' => now(),
                             'password' => null,
+                            'is_active' => true,
                         ]);
                         $user = $existingUser;
                     } else {

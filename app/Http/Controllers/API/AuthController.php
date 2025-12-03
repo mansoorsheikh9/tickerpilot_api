@@ -77,21 +77,24 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (!$user) {
-            throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
-            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'The provided credentials are incorrect.',
+            ], 401);
         }
 
         if ($user->provider === 'google') {
-            throw ValidationException::withMessages([
-                'email' => ['This account uses Google Sign-In. Please use the Google button above.'],
-            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'This account uses Google Sign-In. Please use the Google button to sign in.',
+            ], 400);
         }
 
         if ($user->provider === 'email' && (!$user->password || !Hash::check($request->password, $user->password))) {
-            throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
-            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'The provided credentials are incorrect.',
+            ], 401);
         }
 
         if (!$user->is_active) {

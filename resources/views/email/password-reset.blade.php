@@ -43,8 +43,9 @@
             justify-content: center;
             align-items: center;
             font-weight: 700;
-            font-size: 18px;
+            font-size: 20px;
             font-family: inherit;
+            line-height: 1;
         }
         .logo-text {
             font-size: 26px;
@@ -74,7 +75,7 @@
             display: inline-block;
             padding: 14px 40px;
             background: #000;
-            color: #fff;
+            color: #fff !important;
             text-decoration: none;
             border-radius: 6px;
             font-weight: 600;

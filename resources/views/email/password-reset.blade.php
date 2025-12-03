@@ -21,31 +21,51 @@
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
+
+        /* Header */
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #ffffff;
             padding: 40px 30px;
             text-align: center;
         }
-        .header h1 {
-            color: #ffffff;
-            margin: 0;
-            font-size: 28px;
-            font-weight: 600;
+        .logo-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
         }
+        .logo-box {
+            width: 48px;
+            height: 48px;
+            background: #000;
+            color: #fff;
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 700;
+            font-size: 18px;
+            font-family: inherit;
+        }
+        .logo-text {
+            font-size: 26px;
+            font-weight: 600;
+            color: #000;
+            font-family: inherit;
+        }
+
         .content {
             padding: 40px 30px;
         }
         .greeting {
             font-size: 18px;
-            color: #333;
             margin-bottom: 20px;
         }
         .message {
             font-size: 16px;
             color: #555;
             margin-bottom: 30px;
-            line-height: 1.8;
         }
+
         .button-container {
             text-align: center;
             margin: 35px 0;
@@ -53,17 +73,17 @@
         .reset-button {
             display: inline-block;
             padding: 14px 40px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #ffffff;
+            background: #000;
+            color: #fff;
             text-decoration: none;
             border-radius: 6px;
             font-weight: 600;
             font-size: 16px;
-            transition: transform 0.2s;
         }
         .reset-button:hover {
-            transform: translateY(-2px);
+            opacity: 0.9;
         }
+
         .alternative {
             margin-top: 30px;
             padding: 20px;
@@ -86,6 +106,7 @@
             word-break: break-all;
             margin-top: 10px;
         }
+
         .warning {
             margin-top: 30px;
             padding: 15px;
@@ -95,6 +116,7 @@
             font-size: 14px;
             color: #856404;
         }
+
         .footer {
             padding: 30px;
             text-align: center;
@@ -103,21 +125,24 @@
             font-size: 14px;
             color: #6c757d;
         }
-        .footer p {
-            margin: 5px 0;
-        }
         .footer a {
-            color: #667eea;
+            color: #000;
             text-decoration: none;
         }
     </style>
 </head>
 <body>
 <div class="container">
+
+    <!-- Header -->
     <div class="header">
-        <h1>🔐 TickerPilot</h1>
+        <div class="logo-wrap">
+            <div class="logo-box">TP</div>
+            <div class="logo-text">TickerPilot</div>
+        </div>
     </div>
 
+    <!-- Content -->
     <div class="content">
         <p class="greeting">Hello {{ $user->name }},</p>
 
@@ -132,16 +157,17 @@
 
         <div class="alternative">
             <p><strong>Alternative method:</strong></p>
-            <p>If the button doesn't work, copy and paste this link into your browser:</p>
+            <p>If the button does not work, copy and paste this link into your browser:</p>
             <div class="token-box">{{ $resetUrl }}</div>
         </div>
 
         <div class="warning">
-            <strong>⚠️ Security Notice:</strong> This password reset link will expire in 60 minutes.
-            If you didn't request this password reset, please ignore this email or contact our support team.
+            <strong>Security Notice:</strong> This password reset link will expire in 60 minutes.
+            If you did not request this, please ignore this email or reach out to our support team.
         </div>
     </div>
 
+    <!-- Footer -->
     <div class="footer">
         <p>&copy; {{ date('Y') }} TickerPilot. All rights reserved.</p>
         <p>Need help? <a href="mailto:support@tickerpilot.com">Contact Support</a></p>

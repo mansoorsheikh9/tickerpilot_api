@@ -4,7 +4,6 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Config;
 
 class PaddleService
 {
@@ -308,7 +307,7 @@ class PaddleService
 
             // Check timestamp to prevent replay attacks (optional but recommended)
             $currentTime = time();
-            $webhookTime = (int) $timestamp;
+            $webhookTime = (int)$timestamp;
             $timeDifference = abs($currentTime - $webhookTime);
 
             // Allow 5 minutes of time difference
@@ -454,4 +453,4 @@ class PaddleService
             return null;
         }
     }
-};
+}

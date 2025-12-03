@@ -125,10 +125,34 @@ class AuthController extends Controller
 
         DB::beginTransaction();
         try {
-            $client = new Google_Client(['client_id' => env('GOOGLE_CLIENT_ID')]);
-            $payload = $client->verifyIdToken($request->google_token);
+            // Get both client IDs (web and extension)
+            $webClientId = env('GOOGLE_CLIENT_ID');
+            $extensionClientId = env('GOOGLE_CLIENT_ID_EXTENSION');
+
+            $payload = null;
+
+            // Try to verify with web client ID first
+            if ($webClientId) {
+                try {
+                    $client = new Google_Client(['client_id' => $webClientId]);
+                    $payload = $client->verifyIdToken($request->google_token);
+                } catch (\Exception $e) {
+                    Log::debug('Web client ID verification failed', ['error' => $e->getMessage()]);
+                }
+            }
+
+            // If web client failed, try extension client ID
+            if (!$payload && $extensionClientId) {
+                try {
+                    $client = new Google_Client(['client_id' => $extensionClientId]);
+                    $payload = $client->verifyIdToken($request->google_token);
+                } catch (\Exception $e) {
+                    Log::debug('Extension client ID verification failed', ['error' => $e->getMessage()]);
+                }
+            }
 
             if (!$payload) {
+                Log::error('Google token verification failed for both client IDs');
                 return response()->json([
                     'success' => false,
                     'message' => 'Invalid Google token'
@@ -146,6 +170,15 @@ class AuthController extends Controller
                 $existingUser = User::where('email', $email)->first();
 
                 if ($existingUser) {
+                    // Check if existing user is active before converting
+                    if (!$existingUser->is_active) {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Account is deactivated',
+                        ], 403);
+                    }
+
                     if ($existingUser->provider === 'email') {
                         $existingUser->update([
                             'google_id' => $googleId,
@@ -153,7 +186,6 @@ class AuthController extends Controller
                             'provider' => 'google',
                             'email_verified_at' => now(),
                             'password' => null,
-                            'is_active' => true,
                         ]);
                         $user = $existingUser;
                     } else {
@@ -164,6 +196,7 @@ class AuthController extends Controller
                         ], 409);
                     }
                 } else {
+                    // Create new user with is_active = true
                     $user = User::create([
                         'name' => $name,
                         'email' => $email,
@@ -172,22 +205,24 @@ class AuthController extends Controller
                         'provider' => 'google',
                         'email_verified_at' => now(),
                         'password' => null,
+                        'is_active' => true,  // Set active for new Google users
                     ]);
                 }
             } else {
+                // Check if existing Google user is active
+                if (!$user->is_active) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Account is deactivated',
+                    ], 403);
+                }
+
                 $user->update([
                     'name' => $name,
                     'email' => $email,
                     'avatar' => $avatar,
                 ]);
-            }
-
-            if (!$user->is_active) {
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Account is deactivated',
-                ], 403);
             }
 
             $user->ensureActiveSubscription();
@@ -207,7 +242,8 @@ class AuthController extends Controller
             DB::rollBack();
             Log::error('Google login failed', [
                 'email' => $email ?? 'unknown',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([

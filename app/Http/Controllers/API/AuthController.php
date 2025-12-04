@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
@@ -125,52 +126,93 @@ class AuthController extends Controller
 
         DB::beginTransaction();
         try {
-            // Get both client IDs (web and extension)
-            $webClientId = env('GOOGLE_CLIENT_ID');
-            $extensionClientId = env('GOOGLE_CLIENT_ID_EXTENSION');
+            $token = $request->google_token;
 
-            $payload = null;
+            // Check if it's an access token (starts with 'ya29') or ID token (JWT)
+            $isAccessToken = str_starts_with($token, 'ya29.');
 
-            // Try to verify with web client ID first
-            if ($webClientId) {
+            if ($isAccessToken) {
+                // It's an access token - fetch user info from Google
                 try {
-                    $client = new Google_Client(['client_id' => $webClientId]);
-                    $payload = $client->verifyIdToken($request->google_token);
+                    $response = Http::get('https://www.googleapis.com/oauth2/v2/userinfo', [
+                        'access_token' => $token
+                    ]);
+
+                    if (!$response->successful()) {
+                        Log::error('Failed to fetch Google user info', [
+                            'status' => $response->status(),
+                            'body' => $response->body()
+                        ]);
+
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Invalid Google token'
+                        ], 401);
+                    }
+
+                    $userData = $response->json();
+                    $googleId = $userData['id'];
+                    $email = $userData['email'];
+                    $name = $userData['name'];
+                    $avatar = $userData['picture'] ?? null;
+
                 } catch (\Exception $e) {
-                    Log::debug('Web client ID verification failed', ['error' => $e->getMessage()]);
+                    Log::error('Google API error', [
+                        'error' => $e->getMessage()
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to verify Google token'
+                    ], 401);
                 }
-            }
+            } else {
+                // It's an ID token - verify with Google Client
+                $webClientId = env('GOOGLE_CLIENT_ID');
+                $extensionClientId = env('GOOGLE_CLIENT_ID_EXTENSION');
 
-            // If web client failed, try extension client ID
-            if (!$payload && $extensionClientId) {
-                try {
-                    $client = new Google_Client(['client_id' => $extensionClientId]);
-                    $payload = $client->verifyIdToken($request->google_token);
-                } catch (\Exception $e) {
-                    Log::debug('Extension client ID verification failed', ['error' => $e->getMessage()]);
+                $payload = null;
+
+                // Try web client ID first
+                if ($webClientId) {
+                    try {
+                        $client = new Google_Client(['client_id' => $webClientId]);
+                        $payload = $client->verifyIdToken($token);
+                    } catch (\Exception $e) {
+                        Log::debug('Web client ID verification failed', ['error' => $e->getMessage()]);
+                    }
                 }
+
+                // Try extension client ID
+                if (!$payload && $extensionClientId) {
+                    try {
+                        $client = new Google_Client(['client_id' => $extensionClientId]);
+                        $payload = $client->verifyIdToken($token);
+                    } catch (\Exception $e) {
+                        Log::debug('Extension client ID verification failed', ['error' => $e->getMessage()]);
+                    }
+                }
+
+                if (!$payload) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid Google token'
+                    ], 401);
+                }
+
+                $googleId = $payload['sub'];
+                $email = $payload['email'];
+                $name = $payload['name'];
+                $avatar = $payload['picture'] ?? null;
             }
 
-            if (!$payload) {
-                Log::error('Google token verification failed for both client IDs');
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid Google token'
-                ], 401);
-            }
-
-            $googleId = $payload['sub'];
-            $email = $payload['email'];
-            $name = $payload['name'];
-            $avatar = $payload['picture'] ?? null;
-
+            // Rest of the code remains the same (user creation/login logic)
             $user = User::where('google_id', $googleId)->first();
 
             if (!$user) {
                 $existingUser = User::where('email', $email)->first();
 
                 if ($existingUser) {
-                    // Check if existing user is active before converting
                     if (!$existingUser->is_active) {
                         DB::rollBack();
                         return response()->json([
@@ -196,7 +238,6 @@ class AuthController extends Controller
                         ], 409);
                     }
                 } else {
-                    // Create new user with is_active = true
                     $user = User::create([
                         'name' => $name,
                         'email' => $email,
@@ -205,11 +246,10 @@ class AuthController extends Controller
                         'provider' => 'google',
                         'email_verified_at' => now(),
                         'password' => null,
-                        'is_active' => true,  // Set active for new Google users
+                        'is_active' => true,
                     ]);
                 }
             } else {
-                // Check if existing Google user is active
                 if (!$user->is_active) {
                     DB::rollBack();
                     return response()->json([
@@ -241,7 +281,6 @@ class AuthController extends Controller
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Google login failed', [
-                'email' => $email ?? 'unknown',
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

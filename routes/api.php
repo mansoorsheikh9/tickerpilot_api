@@ -19,6 +19,25 @@ Route::post('google-login', [AuthController::class, 'googleLogin']);
 Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('reset-password', [AuthController::class, 'resetPassword']);
 
+Route::post('test-google-token', function(Request $request) {
+    $token = $request->google_token;
+
+    // Decode without verification (just to see what's in it)
+    $parts = explode('.', $token);
+    if (count($parts) === 3) {
+        $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true);
+
+        return response()->json([
+            'payload' => $payload,
+            'aud' => $payload['aud'] ?? 'not found',
+            'azp' => $payload['azp'] ?? 'not found',
+            'configured_web_client' => env('GOOGLE_CLIENT_ID'),
+            'configured_ext_client' => env('GOOGLE_CLIENT_ID_EXTENSION'),
+        ]);
+    }
+
+    return response()->json(['error' => 'Invalid token format']);
+});
 
 Route::get('user/{idOrEmail}', [AuthController::class, 'getUserByIdOrEmail']);
 
